@@ -1,0 +1,20 @@
+body {
+    margin: 1rem;
+}
+
+.row {
+    display: flex;
+}
+.col {
+    margin-right: 8px;
+    padding: 0;
+}
+
+.bytes {
+    border: 1px solid lightgrey;
+    flex: 0 0 400px;
+}
+.editor {
+    border: 1px solid lightgrey;
+    flex: 0 0 600px;
+}
