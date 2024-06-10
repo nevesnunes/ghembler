@@ -11,11 +11,14 @@ require(['vs/editor/editor.main'], function () {
 
     // Helper methods
 
-    const toCacheKey = (lineNumber, line) => { return `${lineNumber}:${line}`; };
-
     const isValidHexString = (hexString) => {
         const trimmedHexString = hexString.replace(/\s/g, '');
         return trimmedHexString.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(trimmedHexString);
+    };
+
+    const isValidHexNumber = (hexString) => {
+        const trimmedHexString = hexString.replace(/\s/g, '').replace(/0x/, '');
+        return /^[0-9a-fA-F]+$/.test(trimmedHexString);
     };
 
     const fromHexStringToU8 = (hexString) =>
@@ -24,15 +27,19 @@ require(['vs/editor/editor.main'], function () {
     const fromHexStringToPy = (hexString) =>
         Array.prototype.join.call(hexString.replace(/\s/g, '').match(/.{1,2}/g).map((byte) => `\\x${byte}`), '');
 
+    const parseBaseOffset = () => {
+        return parseInt(document.getElementById('offset-input').value.replace(/0x/, ''), 16);
+    }
+
     const fetchCompletions = async (line) => {
         let completions = [];
         const requestConfig = {
             method: 'POST',
             headers: {
                 'Accept': 'application/json',
-                'Content-Type': 'text/plain',
+                'Content-Type': 'application/json',
             },
-            body: line
+            body: JSON.stringify(line)
         };
         const response = await fetch('http://localhost:18000/assemble/', requestConfig)
         if (response.ok) {
@@ -62,32 +69,93 @@ require(['vs/editor/editor.main'], function () {
         return completions;
     };
 
+    const currentByteOffset = function(editorLineNumber, startLineNumber, offset) {
+        let model = instanceBytes.getModel();
+        for (var i = startLineNumber; i < model.getLineCount() + 1; i++) {
+            if (i === editorLineNumber) {
+                break;
+            }
+            let line = model.getLineContent(i).trimStart();
+            if (!line) {
+                continue;
+            }
+            if (isValidHexString(line)) {
+                line.replace(/\s/g, '').match(/.{1,2}/g).map((_) => { offset++; });
+            } else {
+                console.error(`Invalid hex string @ ${line}`);
+            }
+        }
+        return [i, offset];
+    };
+
     const syncBytes = function() {
         (async () => {
-            let instanceBytesValues = [];
-            let model = instanceEditor.getModel();
-            for (let i = 1; i < model.getLineCount() + 1; i++) {
-                let line = model.getLineContent(i);
+            let editorLineNumber = 0;
+            let hexLineNumber = 1;
+            let hexOffset = 0;
+            const modelBytes = instanceBytes.getModel();
+            const modelEditor = instanceEditor.getModel();
+            for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
+                let line = modelEditor.getLineContent(i).trimStart();
                 if (!line) {
                     continue;
                 }
-                let hexBytes = disasmCache[toCacheKey(i, line)];
-                if (!hexBytes) {
-                    hexBytes = UNKNOWN_BYTES;
+                editorLineNumber++;
 
-                    let completions = await fetchCompletions(line);
-                    completions.forEach((completion) => {
-                        if (completion.type === "bytes") {
+                let hexBytes = UNKNOWN_BYTES;
+
+                let baseOffset = parseBaseOffset();
+                [hexLineNumber, hexOffset] = currentByteOffset(editorLineNumber, hexLineNumber, hexOffset);
+                let hexLineLength = modelBytes.getLineContent(hexLineNumber).trimStart().length;
+                let address = baseOffset + hexOffset;
+                let completions = await fetchCompletions([{
+                    "address": address,
+                    "data": line
+                }]);
+
+                // Pick the closest match to what was previously picked by the user
+                let lastDiff = 9999;
+                completions.forEach((completion) => {
+                    if (completion.type === "bytes") {
+                        let candidateDiff = Math.abs(hexLineLength - completion.data.length);
+                        if (candidateDiff < lastDiff) {
+                            lastDiff = candidateDiff;
                             hexBytes = completion.data;
-                            disasmCache[toCacheKey(i, line)] = hexBytes;
                         }
-                    });
-                }
-                instanceBytesValues.push(hexBytes);
-            }
+                    }
+                });
 
-            instanceBytes.setValue(instanceBytesValues.join('\n'));
+                syncBytesLine(hexLineNumber, hexBytes);
+
+                // If this was the last bytes line, we might still have more
+                // editor lines to sync. We need to add an extra empty line to
+                // compare against.
+                if (hexLineNumber == modelBytes.getLineCount()) {
+                    const range = new monaco.Range(hexLineNumber, 0, hexLineNumber, 9999);
+                    const id = { major: 1, minor: 1 };
+                    const text = hexBytes + '\n';
+                    const editOperation = {identifier: id, range: range, text: text, forceMoveMarkers: true};
+                    instanceBytes.executeEdits("custom-code", [ editOperation ]);
+                }
+            }
         })();
+    };
+
+    const syncBytesLine = function(lineNumber, text) {
+        const range = new monaco.Range(lineNumber, 0, lineNumber, 9999);
+        const id = { major: 1, minor: 1 };
+
+        // If the target editor has less lines than the target line to edit,
+        // we need to prepend as many newlines as needed to match both editors
+        let modelBytes = instanceBytes.getModel();
+        let linesToAdd = lineNumber - modelBytes.getLineCount();
+        while (linesToAdd > 0) {
+            text = '\n' + text;
+            linesToAdd--;
+        }
+
+        const editOperation = {identifier: id, range: range, text: text, forceMoveMarkers: true};
+        instanceBytes.executeEdits("custom-code", [ editOperation ]);
     };
 
     const syncDisassemblyLine = function(lineNumber, text) {
@@ -96,8 +164,8 @@ require(['vs/editor/editor.main'], function () {
 
         // If the target editor has less lines than the target line to edit,
         // we need to prepend as many newlines as needed to match both editors
-        let model = instanceEditor.getModel();
-        let linesToAdd = lineNumber - model.getLineCount();
+        let modelEditor = instanceEditor.getModel();
+        let linesToAdd = lineNumber - modelEditor.getLineCount();
         while (linesToAdd > 0) {
             text = '\n' + text;
             linesToAdd--;
@@ -130,12 +198,27 @@ require(['vs/editor/editor.main'], function () {
 
     monaco.languages.registerCompletionItemProvider(LANGUAGE_EDITOR, {
         provideCompletionItems: async (model, position) => {
+            let editorLineNumber = 0;
+            for (let i = 1; i < position.lineNumber + 1; i++) {
+                let line = model.getLineContent(i).trimStart();
+                if (!line) {
+                    continue;
+                }
+                editorLineNumber++;
+            }
+
             const line = model.getLineContent(position.lineNumber).trimStart();
             if (!line) {
                 return { suggestions: [] };
             }
 
-            let completions = await fetchCompletions(line);
+            let baseOffset = parseBaseOffset();
+            let [hexLineNumber, hexOffset] = currentByteOffset(editorLineNumber, 1, 0);
+            let address = baseOffset + hexOffset;
+            let completions = await fetchCompletions([{
+                "address": address,
+                "data": line
+            }]);
 
             let markers = [];
             let isValidCompletion = false;
@@ -231,7 +314,6 @@ require(['vs/editor/editor.main'], function () {
     // State
 
     var previousInstructionLineCount = 0;
-    var disasmCache = {};
     var instanceEditor = monaco.editor.create(
         document.getElementById('editor'), {
             value: '',
@@ -261,9 +343,7 @@ require(['vs/editor/editor.main'], function () {
             const hexBytes = args[2];
             console.log(_, args);
 
-            disasmCache[toCacheKey(lineNumber, line)] = hexBytes;
-
-            syncBytes();
+            syncBytesLine(lineNumber, hexBytes);
         },
         ""
     );
@@ -276,6 +356,7 @@ require(['vs/editor/editor.main'], function () {
             && instanceEditor.getPosition().lineNumber === previousMarkers[0].startLineNumber) {
             monaco.editor.setModelMarkers(instanceEditor.getModel(), OWNER_EDITOR, []);
         }
+
         if (previousInstructionLineCount != model.getLineCount()) {
             previousInstructionLineCount = model.getLineCount();
             syncBytes();
@@ -285,6 +366,12 @@ require(['vs/editor/editor.main'], function () {
     instanceEditor.onDidPaste((_) => {
         syncBytes();
     });
+
+    document.querySelector('#offset-input').onchange = function() {
+        if (isValidHexNumber(document.getElementById('offset-input').value)) {
+            syncBytes();
+        }
+    };
 
     document.querySelector('#save-bin-button').onclick = function() {
         let data = [];
@@ -326,15 +413,14 @@ require(['vs/editor/editor.main'], function () {
             return;
         }
 
-        let offset = document.getElementById('offset-input').value;
-        //offset = offset.startsWith('0x') ? parseInt(offset, 16) : parseInt(offset);
+        let baseOffset = `0x${(parseBaseOffset()).toString(16)}`;
 
         let script = `#!/usr/bin/env python3
 
 import sys
 
 with open(sys.argv[1], 'wb') as f:
-    f.seek(${offset})
+    f.seek(${baseOffset})
 
     b = b''
 ${Array.prototype.join.call(data, '')}

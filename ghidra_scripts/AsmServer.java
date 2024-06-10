@@ -76,6 +76,10 @@ public class AsmServer extends GhidraScript {
 	private static final String DISASSEMBLER_ADDRESS = "address";
 	private static final String DISASSEMBLER_DATA = "data";
 
+	// Either assembled hex bytes or disassembled display text
+	private record InstructionLine(Address address, String data) {
+	}
+
 	@Override
 	protected void run() throws Exception {
 		setupProgram();
@@ -112,6 +116,29 @@ public class AsmServer extends GhidraScript {
 		println("Listening at port 18000...");
 	}
 
+	private InstructionLine parseInstructionLine(JsonReader jsonReader) throws IOException {
+		jsonReader.beginObject();
+
+		try {
+			long addressOffset = 0;
+			String display = "";
+			while (jsonReader.hasNext()) {
+				String name = jsonReader.nextName();
+				if (name.equals(DISASSEMBLER_ADDRESS)) {
+					addressOffset = jsonReader.nextLong();
+				} else if (name.equals(DISASSEMBLER_DATA)) {
+					display = jsonReader.nextString();
+				} else {
+					throw new RuntimeException(String.format("Unknown disassembly field with name='%s'", name));
+				}
+			}
+			Address address = toAddr(addressOffset);
+			return new InstructionLine(address, display);
+		} finally {
+			jsonReader.endObject();
+		}
+	}
+
 	@Override
 	public void cleanup(boolean success) {
 		if (server != null) {
@@ -132,9 +159,24 @@ public class AsmServer extends GhidraScript {
 
 			Headers requestHeaders = he.getRequestHeaders();
 			InputStream is = he.getRequestBody();
-			byte[] data = is.readAllBytes();
-			String line = new String(data);
-			Address at = currentAddress; // FIXME
+
+			InstructionLine line = null;
+			try (JsonReader jsonReader = new JsonReader(new InputStreamReader(is))) {
+				jsonReader.beginArray();
+
+				while (jsonReader.hasNext()) {
+					line = parseInstructionLine(jsonReader);
+					println(String.format("Got line @ 0x%08x => '%s'", line.address().getUnsignedOffset(), line.data()));
+
+					// TODO: Support batch requests
+					break;
+				}
+
+				jsonReader.endArray();
+			} catch (Exception e) {
+				printerr(e.getMessage());
+				throw e;
+			}
 
 			he.getResponseHeaders().put("Access-Control-Allow-Origin", Collections.singletonList("*"));
 			he.sendResponseHeaders(HttpURLConnection.HTTP_OK, 0);
@@ -143,7 +185,7 @@ public class AsmServer extends GhidraScript {
 				JsonWriter jsonWriter = new JsonWriter(new OutputStreamWriter(os));
 				jsonWriter.beginArray();
 
-				for (final AssemblyCompletion co : computeCompletions(at, line)) {
+				for (final AssemblyCompletion co : computeCompletions(line.address(), line.data())) {
 					JsonObject json = new JsonObject();
 					if (co instanceof AssemblyInstruction) {
 						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "bytes");
@@ -184,32 +226,16 @@ public class AsmServer extends GhidraScript {
 				jsonReader.beginArray();
 
 				while (jsonReader.hasNext()) {
-					jsonReader.beginObject();
+					final InstructionLine line = parseInstructionLine(jsonReader);
+					println(String.format("Got line @ 0x%08x => '%s'", line.address().getUnsignedOffset(), line.data()));
 
-					long addressOffset = 0;
-					String display = "";
-					while (jsonReader.hasNext()) {
-						String name = jsonReader.nextName();
-						if (name.equals(DISASSEMBLER_ADDRESS)) {
-							addressOffset = jsonReader.nextLong();
-						} else if (name.equals(DISASSEMBLER_DATA)) {
-							display = jsonReader.nextString();
-						} else {
-							throw new RuntimeException(String.format("Unknown request name='%s'", name));
-						}
-					}
-
-					Address address = toAddr(addressOffset);
-					putAt(address, display);
-					disassembler.disassemble(address, new AddressSet(address), false);
-					Instruction ins = currentProgram.getListing().getInstructionAt(address);
+					putAt(line.address(), line.data());
+					disassembler.disassemble(line.address(), new AddressSet(line.address()), false);
+					final Instruction ins = currentProgram.getListing().getInstructionAt(line.address());
 					if (ins == null) {
-						throw new RuntimeException(
-								String.format("Null instruction @ 0x%08x", address.getUnsignedOffset()));
+						throw new RuntimeException(String.format("Null instruction @ 0x%08x", line.address().getUnsignedOffset()));
 					}
 					instructions.add(ins.toString());
-
-					jsonReader.endObject();
 				}
 
 				jsonReader.endArray();
@@ -266,9 +292,7 @@ public class AsmServer extends GhidraScript {
 				currentProgram.getMemory().convertToInitialized(mb, (byte) '\0');
 			} else {
 				// Clear any previously disassembled instructions
-				currentProgram
-						.getListing()
-						.clearCodeUnits(address, toAddr(address.getUnsignedOffset() + memBytes.length), false);
+				currentProgram.getListing().clearCodeUnits(address, toAddr(address.getUnsignedOffset() + memBytes.length), false);
 			}
 			currentProgram.getMemory().setBytes(address, memBytes, 0, memBytes.length);
 		} catch (Exception e) {
@@ -341,7 +365,8 @@ public class AsmServer extends GhidraScript {
 	}
 
 	/**
-	 * Represents a textual suggestion to complete or partially complete an assembly instruction
+	 * Represents a textual suggestion to complete or partially complete an assembly
+	 * instruction
 	 */
 	static class AssemblySuggestion extends AssemblyCompletion {
 		public AssemblySuggestion(String text, String display) {
