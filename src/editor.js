@@ -18,8 +18,11 @@ require(['vs/editor/editor.main'], function () {
         return trimmedHexString.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(trimmedHexString);
     };
 
-    const fromHexString = (hexString) =>
+    const fromHexStringToU8 = (hexString) =>
         Uint8Array.from(hexString.replace(/\s/g, '').match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
+
+    const fromHexStringToPy = (hexString) =>
+        Array.prototype.join.call(hexString.replace(/\s/g, '').match(/.{1,2}/g).map((byte) => `\\x${byte}`), '');
 
     const fetchCompletions = async (line) => {
         let completions = [];
@@ -266,8 +269,8 @@ require(['vs/editor/editor.main'], function () {
     );
 
     instanceEditor.onDidChangeModelContent((_) => {
-        let model = instanceEditor.getModel();
-        let previousMarkers = monaco.editor.getModelMarkers();
+        const model = instanceEditor.getModel();
+        const previousMarkers = monaco.editor.getModelMarkers();
         if (previousMarkers.length > 0
             && previousMarkers[0].owner === OWNER_EDITOR
             && instanceEditor.getPosition().lineNumber === previousMarkers[0].startLineNumber) {
@@ -283,23 +286,63 @@ require(['vs/editor/editor.main'], function () {
         syncBytes();
     });
 
-    document.querySelector('#save-button').onclick = function() {
+    document.querySelector('#save-bin-button').onclick = function() {
         let data = [];
-        let model = instanceBytes.getModel();
+        const model = instanceBytes.getModel();
         for (let i = 1; i < model.getLineCount() + 1; i++) {
-            let line = model.getLineContent(i);
+            const line = model.getLineContent(i);
             if (!line || (line == UNKNOWN_BYTES)) {
                 continue;
             }
-            data.push(fromHexString(line));
+            data.push(fromHexStringToU8(line));
         }
         if (data.length === 0) {
             alert("No bytes to save.");
             return;
         }
 
-        let blob = new Blob(data, {type: "application/octet-stream"});
-        let fileName = "out.bin";
+        const blob = new Blob(data, {type: "application/octet-stream"});
+        const fileName = "out.bin";
+        saveAs(blob, fileName);
+    };
+
+    document.querySelector('#save-patch-button').onclick = function() {
+        let data = [];
+        const modelBytes = instanceBytes.getModel();
+        const modelEditor = instanceEditor.getModel();
+        for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
+            const line = modelBytes.getLineContent(i);
+            if (!line || (line == UNKNOWN_BYTES)) {
+                continue;
+            }
+            const disassembledLine = modelEditor.getLineContent(i).trim();
+            if (disassembledLine.length > 0) {
+                data.push(`    # ${disassembledLine}\n`);
+            }
+            data.push(`    b += b'${fromHexStringToPy(line)}'\n`);
+        }
+        if (data.length === 0) {
+            alert("No bytes to save.");
+            return;
+        }
+
+        let offset = document.getElementById('offset-input').value;
+        //offset = offset.startsWith('0x') ? parseInt(offset, 16) : parseInt(offset);
+
+        let script = `#!/usr/bin/env python3
+
+import sys
+
+with open(sys.argv[1], 'wb') as f:
+    f.seek(${offset})
+
+    b = b''
+${Array.prototype.join.call(data, '')}
+    f.write(b)
+`
+
+        const blob = new Blob([script], {type: "application/octet-stream"});
+        const fileName = "out.py";
         saveAs(blob, fileName);
     };
 });

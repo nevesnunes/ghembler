@@ -6,6 +6,27 @@ Example using [Toshiba TLCS-900/H](https://github.com/nevesnunes/ghidra-tlcs900h
 
 ![](./example.png)
 
+`Save patch` generates a Python script that applies instructions at the given base offset to an input file:
+
+```python
+#!/usr/bin/env python3
+
+import sys
+
+with open(sys.argv[1], 'wb') as f:
+    f.seek(0x8000)
+
+    b = b''
+    # adc (+0x1234),A
+    b += b'\xc1\x34\x12\x99'
+    # swi 7
+    b += b'\xff'
+    # extz XBC
+    b += b'\xe7\xe4\x12'
+
+    f.write(b)
+```
+
 ## Why not just use Ghidra?
 
 We can modify a disassembled instruction or edit cleared bytes with action "Patch Instruction", which is fine once you change the default keybind to use a single key.
