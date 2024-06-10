@@ -91,6 +91,8 @@ require(['vs/editor/editor.main'], function () {
     const syncBytes = function() {
         (async () => {
             let baseOffset = parseBaseOffset();
+            let cacheBytes = [];
+            let emptyLines = new Set();
             let requestLineNumber = 1;
             let requestLines = [];
             const modelBytes = instanceBytes.getModel();
@@ -98,6 +100,7 @@ require(['vs/editor/editor.main'], function () {
             for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
                 let line = modelEditor.getLineContent(i).trimStart();
                 if (!line) {
+                    emptyLines.add(i);
                     continue;
                 }
 
@@ -116,19 +119,28 @@ require(['vs/editor/editor.main'], function () {
 
             let completionSet = await fetchCompletions(requestLines);
 
-            let cacheBytes = [];
-            completionSet.forEach((completions) => {
-                let hexBytes = UNKNOWN_BYTES;
-                completions.forEach((completion) => {
-                    if (completion.type === "bytes") {
-                        hexBytes = completion.data;
-                    } else if (completion.type === "error") {
-                        // x86 spams several constructor errors...
-                        // console.error(completion.data);
-                    }
-                });
-                cacheBytes.push(hexBytes);
-            });
+            let completionIndex = 0;
+            for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
+                if (emptyLines.has(i)) {
+                    cacheBytes.push('');
+                } else if (completionIndex < completionSet.length) {
+                    let completions = completionSet[completionIndex];
+                    let hexBytes = UNKNOWN_BYTES;
+                    completions.forEach((completion) => {
+                        if (completion.type === "bytes") {
+                            hexBytes = completion.data;
+                        } else if (completion.type === "error") {
+                            // x86 spams several constructor errors...
+                            // console.error(completion.data);
+                        }
+                    });
+                    cacheBytes.push(hexBytes);
+
+                    completionIndex++;
+                } else {
+                    console.error(`OOB completionIndex ${completionIndex}`);
+                }
+            }
 
             instanceBytes.setValue(cacheBytes.join('\n'));
         })();
