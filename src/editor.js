@@ -90,9 +90,9 @@ require(['vs/editor/editor.main'], function () {
 
     const syncBytes = function() {
         (async () => {
-            let editorLineNumber = 0;
-            let hexLineNumber = 1;
-            let hexOffset = 0;
+            let baseOffset = parseBaseOffset();
+            let requestLineNumber = 1;
+            let requestLines = [];
             const modelBytes = instanceBytes.getModel();
             const modelEditor = instanceEditor.getModel();
             for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
@@ -100,44 +100,37 @@ require(['vs/editor/editor.main'], function () {
                 if (!line) {
                     continue;
                 }
-                editorLineNumber++;
 
-                let hexBytes = UNKNOWN_BYTES;
-
-                let baseOffset = parseBaseOffset();
-                [hexLineNumber, hexOffset] = currentByteOffset(editorLineNumber, hexLineNumber, hexOffset);
-                let hexLineLength = modelBytes.getLineContent(hexLineNumber).trimStart().length;
-                let address = baseOffset + hexOffset;
-                let completions = await fetchCompletions([{
-                    "address": address,
-                    "data": line
-                }]);
-
-                // Pick the closest match to what was previously picked by the user
-                let lastDiff = 9999;
-                completions.forEach((completion) => {
-                    if (completion.type === "bytes") {
-                        let candidateDiff = Math.abs(hexLineLength - completion.data.length);
-                        if (candidateDiff < lastDiff) {
-                            lastDiff = candidateDiff;
-                            hexBytes = completion.data;
-                        }
-                    }
+                let previousLength = 0;
+                if (modelBytes.getLineCount() >= i) {
+                    previousLength = modelBytes.getLineContent(i).length;
+                }
+                requestLines.push({
+                    "address": baseOffset,
+                    "data": line,
+                    "previousLength": previousLength
                 });
 
-                syncBytesLine(hexLineNumber, hexBytes);
-
-                // If this was the last bytes line, we might still have more
-                // editor lines to sync. We need to add an extra empty line to
-                // compare against.
-                if (hexLineNumber == modelBytes.getLineCount()) {
-                    const range = new monaco.Range(hexLineNumber, 0, hexLineNumber, 9999);
-                    const id = { major: 1, minor: 1 };
-                    const text = hexBytes + '\n';
-                    const editOperation = {identifier: id, range: range, text: text, forceMoveMarkers: true};
-                    instanceBytes.executeEdits("custom-code", [ editOperation ]);
-                }
+                requestLineNumber++;
             }
+
+            let completionSet = await fetchCompletions(requestLines);
+
+            let cacheBytes = [];
+            completionSet.forEach((completions) => {
+                let hexBytes = UNKNOWN_BYTES;
+                completions.forEach((completion) => {
+                    if (completion.type === "bytes") {
+                        hexBytes = completion.data;
+                    } else if (completion.type === "error") {
+                        // x86 spams several constructor errors...
+                        // console.error(completion.data);
+                    }
+                });
+                cacheBytes.push(hexBytes);
+            });
+
+            instanceBytes.setValue(cacheBytes.join('\n'));
         })();
     };
 
@@ -222,7 +215,7 @@ require(['vs/editor/editor.main'], function () {
 
             let markers = [];
             let isValidCompletion = false;
-            const suggestions = completions.reduce((result, k) => {
+            const suggestions = completions[0].reduce((result, k) => {
                 if (k.type === "suggestion") {
                     return result.concat({
                         label: line + k.data,
@@ -313,7 +306,9 @@ require(['vs/editor/editor.main'], function () {
 
     // State
 
+    var isPasted = false;
     var previousInstructionLineCount = 0;
+
     var instanceEditor = monaco.editor.create(
         document.getElementById('editor'), {
             value: '',
@@ -341,7 +336,7 @@ require(['vs/editor/editor.main'], function () {
             const lineNumber = args[0].lineNumber;
             const line = args[1];
             const hexBytes = args[2];
-            console.log(_, args);
+            //console.log(_, args);
 
             syncBytesLine(lineNumber, hexBytes);
         },
@@ -357,14 +352,19 @@ require(['vs/editor/editor.main'], function () {
             monaco.editor.setModelMarkers(instanceEditor.getModel(), OWNER_EDITOR, []);
         }
 
-        if (previousInstructionLineCount != model.getLineCount()) {
+        if (!isPasted && (previousInstructionLineCount != model.getLineCount())) {
             previousInstructionLineCount = model.getLineCount();
             syncBytes();
         }
     });
 
     instanceEditor.onDidPaste((_) => {
-        syncBytes();
+        try {
+            isPasted = true;
+            syncBytes();
+        } finally {
+            isPasted = false;
+        }
     });
 
     document.querySelector('#offset-input').onchange = function() {
