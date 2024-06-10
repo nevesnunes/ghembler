@@ -6,6 +6,14 @@ Example using [Toshiba TLCS-900/H](https://github.com/nevesnunes/ghidra-tlcs900h
 
 ![](./example.png)
 
+## Why not just use Ghidra?
+
+We can modify a disassembled instruction or edit cleared bytes with action "Patch Instruction", which is fine once you change the default keybind to use a single key.
+
+However, once there's the need for more common text editor operations (insert/delete/copy/paste), it becomes clunky, and any [workarounds are very limited](https://gist.github.com/murachue/5d39a614d1803d7d327bee95d81f495b).
+
+I'd also like to introduce some assembler-specific features (directives/macros/labels).
+
 ## Running
 
 Backend (Ghidra script):
@@ -55,3 +63,4 @@ curl -X POST -H "Content-Type: text/plain" --data "jp NZ/NE,XWA+1" http://localh
 ## Related work
 
 - [GitHub \- ret2jazzy/disasm\.pro: A realtime assembler/disassembler \(formerly known as disasm\.ninja\)](https://github.com/ret2jazzy/disasm.pro)
+- [GitHub \- gaasedelen/patching: An Interactive Binary Patching Plugin for IDA Pro](https://github.com/gaasedelen/patching)
