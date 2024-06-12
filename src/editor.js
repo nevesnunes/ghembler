@@ -15,6 +15,14 @@ require(['vs/editor/editor.main'], function () {
         return /^\s*\.[0-9a-zA-Z]+:/.test(line);
     }
 
+    const parseByteDirective = (line) => {
+        return line.match(/^\s*\.byte:\s*((0x)?[0-9a-fA-F]+)\s*$/);
+    }
+
+    const parseFillDirective = (line) => {
+        return line.match(/^\s*\.fill:\s*((0x)?[0-9a-fA-F]+)\s*,\s*((0x)?[0-9a-fA-F]+)\s*$/);
+    }
+
     const parseLabelDirective = (line) => {
         return line.match(/^\s*\.lbl:\s*(\w+)\s*$/);
     }
@@ -113,6 +121,21 @@ require(['vs/editor/editor.main'], function () {
                 if (!line) {
                     emptyLines.add(i);
                 } else if (isDirective(line)) {
+                    let candidateByte = parseByteDirective(line);
+                    if (candidateByte) {
+                        requestLines.push({
+                            "data": [1, candidateByte[1]].join(","),
+                            "type": "fill",
+                        });
+                    }
+                    let candidateFill = parseFillDirective(line);
+                    if (candidateFill) {
+                        console.log(candidateFill);
+                        requestLines.push({
+                            "data": [candidateFill[1], candidateFill[3]].join(","),
+                            "type": "fill",
+                        });
+                    }
                     let candidateLabel = parseLabelDirective(line);
                     if (candidateLabel) {
                         requestLines.push({

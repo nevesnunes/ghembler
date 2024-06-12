@@ -82,9 +82,10 @@ public class AsmServer extends GhidraScript {
 	private static final String DISASSEMBLER_DATA = "data";
 	private static final String DISASSEMBLER_PREVIOUS_LENGTH = "previousLength";
 
+	private static final String TYPE_DIRECTIVE_FILL = "fill";
+	private static final String TYPE_DIRECTIVE_LABEL = "label";
 	private static final String TYPE_DIRECTIVE_ORIGIN = "origin";
 	private static final String TYPE_INSTRUCTION = "instruction";
-	private static final String TYPE_LABEL = "label";
 
 	// Either assembled hex bytes or disassembled display text
 	private record AssemblyLine(Address address, String type, String data, long previousLength) {
@@ -302,7 +303,22 @@ public class AsmServer extends GhidraScript {
 					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
 					gson.toJson(json, jsonWriter);
 				}
-			} else if (line.type().equals(TYPE_LABEL)) {
+			} else if (line.type().equals(TYPE_DIRECTIVE_FILL)) {
+				String[] parts = line.data().split(",");
+				long n = Long.parseLong(parts[0]);
+				byte[] memBytes = HexFormat.of().parseHex(parts[1]);
+				StringBuilder outputBytes = new StringBuilder();
+				for (long i = 0; i < n; i++) {
+					putAt(nextAddress, memBytes);
+					nextAddress = toAddr(nextAddress.getUnsignedOffset() + memBytes.length);
+					outputBytes.append(HexFormat.ofDelimiter(" ").formatHex(memBytes) + " ");
+				}
+
+				JsonObject json = new JsonObject();
+				json.addProperty(ASSEMBLER_COMPLETION_TYPE, "bytes");
+				json.addProperty(ASSEMBLER_COMPLETION_DATA, outputBytes.toString());
+				gson.toJson(json, jsonWriter);
+			} else if (line.type().equals(TYPE_DIRECTIVE_LABEL)) {
 				try {
 					putSymbol(nextAddress, line.data());
 
@@ -357,7 +373,7 @@ public class AsmServer extends GhidraScript {
 				JsonObject json = new JsonObject();
 				json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
 				gson.toJson(json, jsonWriter);
-			} else if (line.type().equals(TYPE_LABEL)) {
+			} else if (line.type().equals(TYPE_DIRECTIVE_LABEL)) {
 				try {
 					putSymbol(line.address(), line.data());
 
@@ -459,7 +475,10 @@ public class AsmServer extends GhidraScript {
 			throw new RuntimeException(String.format("Null bytes to put @ 0x%08x", address.getUnsignedOffset()));
 		}
 		byte[] memBytes = HexFormat.of().parseHex(hexBytes.replaceAll("\\s+", ""));
+		putAt(address, memBytes);
+	}
 
+	private void putAt(Address address, byte[] memBytes) {
 		boolean isContained = false;
 		for (MemoryBlock mb : currentProgram.getMemory().getBlocks()) {
 			if (mb.contains(address)) {
