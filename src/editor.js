@@ -11,6 +11,18 @@ require(['vs/editor/editor.main'], function () {
 
     // Helper methods
 
+    const isDirective = (line) => {
+        return /^\s*\.[0-9a-zA-Z]+:/.test(line);
+    }
+
+    const parseLabelDirective = (line) => {
+        return line.match(/^\s*\.lbl:\s*(\w+)\s*$/);
+    }
+
+    const parseOriginDirective = (line) => {
+        return line.match(/^\s*\.org:\s*((0x)?[0-9a-fA-F]+)\s*$/);
+    }
+
     const isValidHexString = (hexString) => {
         const trimmedHexString = hexString.replace(/\s/g, '');
         return trimmedHexString.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(trimmedHexString);
@@ -70,12 +82,12 @@ require(['vs/editor/editor.main'], function () {
     };
 
     const currentByteOffset = function(editorLineNumber, startLineNumber, offset) {
-        let model = instanceBytes.getModel();
-        for (var i = startLineNumber; i < model.getLineCount() + 1; i++) {
+        const modelBytes = instanceBytes.getModel();
+        for (var i = startLineNumber; i < modelBytes.getLineCount() + 1; i++) {
             if (i === editorLineNumber) {
                 break;
             }
-            let line = model.getLineContent(i).trimStart();
+            let line = modelBytes.getLineContent(i).trimStart();
             if (!line) {
                 continue;
             }
@@ -93,7 +105,6 @@ require(['vs/editor/editor.main'], function () {
             let baseOffset = parseBaseOffset();
             let cacheBytes = [];
             let emptyLines = new Set();
-            let requestLineNumber = 1;
             let requestLines = [];
             const modelBytes = instanceBytes.getModel();
             const modelEditor = instanceEditor.getModel();
@@ -101,20 +112,32 @@ require(['vs/editor/editor.main'], function () {
                 let line = modelEditor.getLineContent(i).trimStart();
                 if (!line) {
                     emptyLines.add(i);
-                    continue;
+                } else if (isDirective(line)) {
+                    let candidateLabel = parseLabelDirective(line);
+                    if (candidateLabel) {
+                        requestLines.push({
+                            "data": candidateLabel[1],
+                            "type": "label",
+                        });
+                    }
+                    let candidateOrigin = parseOriginDirective(line);
+                    if (candidateOrigin) {
+                        requestLines.push({
+                            "data": candidateOrigin[1],
+                            "type": "origin",
+                        });
+                    }
+                } else {
+                    let previousLength = 0;
+                    if (modelBytes.getLineCount() >= i) {
+                        previousLength = modelBytes.getLineContent(i).length;
+                    }
+                    requestLines.push({
+                        "address": baseOffset,
+                        "data": line,
+                        "previousLength": previousLength
+                    });
                 }
-
-                let previousLength = 0;
-                if (modelBytes.getLineCount() >= i) {
-                    previousLength = modelBytes.getLineContent(i).length;
-                }
-                requestLines.push({
-                    "address": baseOffset,
-                    "data": line,
-                    "previousLength": previousLength
-                });
-
-                requestLineNumber++;
             }
 
             let completionSet = await fetchCompletions(requestLines);
@@ -129,6 +152,9 @@ require(['vs/editor/editor.main'], function () {
                     completions.forEach((completion) => {
                         if (completion.type === "bytes") {
                             hexBytes = completion.data;
+                        } else if (completion.type === "ok") {
+                            // Used by directives, display them as blank
+                            hexBytes = '';
                         } else if (completion.type === "error") {
                             // x86 spams several constructor errors...
                             // console.error(completion.data);
@@ -188,6 +214,7 @@ require(['vs/editor/editor.main'], function () {
         monaco.languages.setMonarchTokensProvider(LANGUAGE_EDITOR, {
             tokenizer: {
                 root: [
+                    [/^\s*\.[0-9a-zA-Z]+:.*/, 'annotation'],
                     [/0[xX][0-9a-fA-F]+/, 'number'],
                     [/\d+/, 'number'],
                     [/".*?"/, 'string'],
@@ -247,6 +274,8 @@ require(['vs/editor/editor.main'], function () {
                             arguments: [position, line, k.data]
                         }
                     })
+                } else if (k.type === "ok") {
+                    isValidCompletion = true;
                 } else if (k.type === "error") {
                     markers.push({
                         startLineNumber: position.lineNumber,
@@ -323,20 +352,20 @@ require(['vs/editor/editor.main'], function () {
 
     var instanceEditor = monaco.editor.create(
         document.getElementById('editor'), {
-            value: '',
             language: LANGUAGE_EDITOR,
             minimap: {
                 enabled: false,
             },
+            value: '',
         }
     );
     var instanceBytes = monaco.editor.create(
         document.getElementById('bytes'), {
-            value: '',
             language: LANGUAGE_BYTES,
             minimap: {
                 enabled: false,
             },
+            value: '',
         }
     );
 
@@ -356,7 +385,7 @@ require(['vs/editor/editor.main'], function () {
     );
 
     instanceEditor.onDidChangeModelContent((_) => {
-        const model = instanceEditor.getModel();
+        const modelEditor = instanceEditor.getModel();
         const previousMarkers = monaco.editor.getModelMarkers();
         if (previousMarkers.length > 0
             && previousMarkers[0].owner === OWNER_EDITOR
@@ -364,8 +393,8 @@ require(['vs/editor/editor.main'], function () {
             monaco.editor.setModelMarkers(instanceEditor.getModel(), OWNER_EDITOR, []);
         }
 
-        if (!isPasted && (previousInstructionLineCount != model.getLineCount())) {
-            previousInstructionLineCount = model.getLineCount();
+        if (!isPasted && (previousInstructionLineCount != modelEditor.getLineCount())) {
+            previousInstructionLineCount = modelEditor.getLineCount();
             syncBytes();
         }
     });
@@ -387,9 +416,9 @@ require(['vs/editor/editor.main'], function () {
 
     document.querySelector('#save-bin-button').onclick = function() {
         let data = [];
-        const model = instanceBytes.getModel();
-        for (let i = 1; i < model.getLineCount() + 1; i++) {
-            const line = model.getLineContent(i);
+        const modelBytes = instanceBytes.getModel();
+        for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
+            const line = modelBytes.getLineContent(i);
             if (!line || (line == UNKNOWN_BYTES)) {
                 continue;
             }
@@ -415,7 +444,12 @@ require(['vs/editor/editor.main'], function () {
                 continue;
             }
             const disassembledLine = modelEditor.getLineContent(i).trim();
-            if (disassembledLine.length > 0) {
+            if (isDirective(disassembledLine)) {
+                let candidateOrigin = parseOriginDirective(disassembledLine);
+                if (candidateOrigin) {
+                    data.push(`\n    f.seek(${candidateOrigin[1]})\n\n`);
+                }
+            } else if (disassembledLine.length > 0) {
                 data.push(`    # ${disassembledLine}\n`);
             }
             data.push(`    b += b'${fromHexStringToPy(line)}'\n`);

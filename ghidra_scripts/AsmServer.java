@@ -24,6 +24,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 import generic.theme.GThemeDefaults.Colors;
 import ghidra.app.plugin.assembler.Assembler;
@@ -50,8 +51,11 @@ import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.mem.MemoryBlockException;
+import ghidra.program.model.symbol.SourceType;
+import ghidra.program.model.symbol.Symbol;
 import ghidra.util.NumericUtilities;
 import ghidra.util.exception.CancelledException;
+import ghidra.util.exception.InvalidInputException;
 import ghidra.util.exception.NotFoundException;
 
 import com.sun.net.httpserver.Headers;
@@ -74,11 +78,16 @@ public class AsmServer extends GhidraScript {
 	private static final String ASSEMBLER_COMPLETION_DATA = "data";
 
 	private static final String DISASSEMBLER_ADDRESS = "address";
+	private static final String DISASSEMBLER_TYPE = "type";
 	private static final String DISASSEMBLER_DATA = "data";
 	private static final String DISASSEMBLER_PREVIOUS_LENGTH = "previousLength";
 
+	private static final String TYPE_DIRECTIVE_ORIGIN = "origin";
+	private static final String TYPE_INSTRUCTION = "instruction";
+	private static final String TYPE_LABEL = "label";
+
 	// Either assembled hex bytes or disassembled display text
-	private record InstructionLine(Address address, String data, long previousLength) {
+	private record AssemblyLine(Address address, String type, String data, long previousLength) {
 	}
 
 	@Override
@@ -117,17 +126,20 @@ public class AsmServer extends GhidraScript {
 		println("Listening at port 18000...");
 	}
 
-	private InstructionLine parseInstructionLine(JsonReader jsonReader) throws IOException {
+	private AssemblyLine parseAssemblyLine(JsonReader jsonReader) throws IOException {
 		jsonReader.beginObject();
 
 		try {
 			long addressOffset = 0;
+			String type = TYPE_INSTRUCTION;
 			String display = "";
 			long previousLength = 0;
 			while (jsonReader.hasNext()) {
 				String name = jsonReader.nextName();
 				if (name.equals(DISASSEMBLER_ADDRESS)) {
 					addressOffset = jsonReader.nextLong();
+				} else if (name.equals(DISASSEMBLER_TYPE)) {
+					type = jsonReader.nextString();
 				} else if (name.equals(DISASSEMBLER_DATA)) {
 					display = jsonReader.nextString();
 				} else if (name.equals(DISASSEMBLER_PREVIOUS_LENGTH)) {
@@ -137,7 +149,7 @@ public class AsmServer extends GhidraScript {
 				}
 			}
 			Address address = toAddr(addressOffset);
-			return new InstructionLine(address, display, previousLength);
+			return new AssemblyLine(address, type, display, previousLength);
 		} finally {
 			jsonReader.endObject();
 		}
@@ -161,22 +173,28 @@ public class AsmServer extends GhidraScript {
 				return;
 			}
 
-			Headers requestHeaders = he.getRequestHeaders();
+			he.getRequestHeaders();
 			InputStream is = he.getRequestBody();
+			byte[] data = is.readAllBytes();
+			//println(new String(data));
 
-			List<InstructionLine> lines = new ArrayList<>();
-			try (JsonReader jsonReader = new JsonReader(new InputStreamReader(is))) {
+			List<AssemblyLine> lines = new ArrayList<>();
+			try (JsonReader jsonReader = new JsonReader(new InputStreamReader(new ByteArrayInputStream(data)))) {
 				jsonReader.beginArray();
 
 				while (jsonReader.hasNext()) {
-					InstructionLine line = parseInstructionLine(jsonReader);
-					println(String.format("Got line @ 0x%08x => '%s'", line.address().getUnsignedOffset(), line.data()));
+					AssemblyLine line = parseAssemblyLine(jsonReader);
+					println(String.format("Got '%s' @ 0x%08x => '%s'", line.type(), line.address().getUnsignedOffset(), line.data()));
 					lines.add(line);
 				}
 
 				jsonReader.endArray();
 			} catch (Exception e) {
 				printerr(e.getMessage());
+				printerr(Arrays.stream(e.getStackTrace())
+						.map(StackTraceElement::toString)
+						.collect(Collectors.joining("\n\t")));
+				
 				throw e;
 			}
 
@@ -198,6 +216,10 @@ public class AsmServer extends GhidraScript {
 				jsonWriter.close();
 			} catch (Exception e) {
 				printerr(e.getMessage());
+				printerr(Arrays.stream(e.getStackTrace())
+						.map(StackTraceElement::toString)
+						.collect(Collectors.joining("\n\t")));
+				
 				throw e;
 			} finally {
 				he.close();
@@ -205,43 +227,103 @@ public class AsmServer extends GhidraScript {
 		}
 	}
 
-	private void computeCompletionsInBatch(Gson gson, JsonWriter jsonWriter, List<InstructionLine> lines) throws IOException {
+	private void putSymbol(Address address, String name) throws InvalidInputException {
+		currentProgram.getSymbolTable().getSymbols(name).forEach(Symbol::delete);
+		currentProgram.getSymbolTable().createLabel(
+				address,
+				name,
+				currentProgram.getGlobalNamespace(),
+				SourceType.USER_DEFINED);
+	}
+
+	private void computeCompletionsInBatch(Gson gson, JsonWriter jsonWriter, List<AssemblyLine> lines) throws IOException {
 		Address nextAddress = lines.get(0).address();
-		for (InstructionLine line : lines) {
+		for (AssemblyLine line : lines) {
 			jsonWriter.beginArray();
 
-			AssemblyInstruction candidateInstruction = null;
-			long lastDiff = 9999;
-			for (final AssemblyCompletion co : computeCompletions(nextAddress, line.data())) {
-				if (co instanceof AssemblyInstruction) {
-					// Addresses sent in batch request are assumed to always be the base offset,
-					// since the client doesn't know about previous instruction lengths, so
-					// we need to compute the next instruction's address, picking one of the
-					// possible encodings (which might not match what the user previously picked).
-					long candidateDiff = Math.abs(co.getDisplay().length() - line.previousLength);
-					if (candidateDiff < lastDiff) {
-						lastDiff = candidateDiff;
-						candidateInstruction = (AssemblyInstruction) co;
+			if (line.type().equals(TYPE_INSTRUCTION)) {
+				AssemblyInstruction candidateInstruction = null;
+				long lastDiff = 9999;
+				for (final AssemblyCompletion co : computeCompletions(nextAddress, line.data())) {
+					if (co instanceof AssemblyInstruction) {
+						// Addresses sent in batch request are assumed to always be the base offset,
+						// since the client doesn't know about previous instruction lengths, so
+						// we need to compute the next instruction's address, picking one of the
+						// possible encodings (which might not match what the user previously picked).
+						long candidateDiff = Math.abs(co.getDisplay().length() - line.previousLength);
+						if (candidateDiff < lastDiff) {
+							lastDiff = candidateDiff;
+							candidateInstruction = (AssemblyInstruction) co;
+						}
+					} else if (co instanceof AssemblySuggestion) {
+						//println("Skipping AssemblySuggestion in batch mode");
+					} else if (co instanceof AssemblyError) {
+						JsonObject json = new JsonObject();
+						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
+						json.addProperty(ASSEMBLER_COMPLETION_DATA, co.getDisplay());
+						gson.toJson(json, jsonWriter);
+					} else {
+						printerr(String.format("Unknown AssemblyCompletion '%s'", co));
 					}
-				} else if (co instanceof AssemblySuggestion) {
-					println("Skipping AssemblySuggestion in batch mode");
-				} else if (co instanceof AssemblyError) {
+				}
+	
+				if (candidateInstruction != null) {
+					try {
+						byte[] memBytes = HexFormat.of().parseHex(candidateInstruction.getDisplay().replaceAll("\\s+", ""));
+						nextAddress = toAddr(nextAddress.getUnsignedOffset() + memBytes.length);
+		
+						JsonObject json = new JsonObject();
+						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "bytes");
+						json.addProperty(ASSEMBLER_COMPLETION_DATA, candidateInstruction.getDisplay());
+						gson.toJson(json, jsonWriter);
+					} catch (Exception e) {
+						printerr(e.getMessage());
+						printerr(Arrays.stream(e.getStackTrace())
+								.map(StackTraceElement::toString)
+								.collect(Collectors.joining("\n\t")));
+
+						JsonObject json = new JsonObject();
+						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
+						json.addProperty(ASSEMBLER_COMPLETION_DATA, e.getMessage());
+						gson.toJson(json, jsonWriter);
+					}
+				}
+			} else if (line.type().equals(TYPE_DIRECTIVE_ORIGIN)) {
+				Address originAddress = toAddr(line.data());
+				if (originAddress == null) {
 					JsonObject json = new JsonObject();
 					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
-					json.addProperty(ASSEMBLER_COMPLETION_DATA, co.getDisplay());
+					json.addProperty(ASSEMBLER_COMPLETION_DATA, String.format("Invalid origin '%s'", line.data()));
 					gson.toJson(json, jsonWriter);
 				} else {
-					printerr(String.format("Unknown AssemblyCompletion '%s'", co));
+					nextAddress = originAddress;
+					
+					JsonObject json = new JsonObject();
+					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
+					gson.toJson(json, jsonWriter);
 				}
-			}
+			} else if (line.type().equals(TYPE_LABEL)) {
+				try {
+					putSymbol(nextAddress, line.data());
 
-			if (candidateInstruction != null) {
-				byte[] memBytes = HexFormat.of().parseHex(candidateInstruction.getDisplay().replaceAll("\\s+", ""));
-				nextAddress = toAddr(nextAddress.getUnsignedOffset() + memBytes.length);
+					JsonObject json = new JsonObject();
+					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
+					gson.toJson(json, jsonWriter);
+				} catch (Exception e) {
+					printerr(e.getMessage());
+					printerr(Arrays.stream(e.getStackTrace())
+							.map(StackTraceElement::toString)
+							.collect(Collectors.joining("\n\t")));
 
+					JsonObject json = new JsonObject();
+					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
+					json.addProperty(ASSEMBLER_COMPLETION_DATA, e.getMessage());
+					gson.toJson(json, jsonWriter);
+				}
+			} else {
 				JsonObject json = new JsonObject();
-				json.addProperty(ASSEMBLER_COMPLETION_TYPE, "bytes");
-				json.addProperty(ASSEMBLER_COMPLETION_DATA, candidateInstruction.getDisplay());
+				json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
+				json.addProperty(ASSEMBLER_COMPLETION_DATA, String.format("Unknown type '%s'", line.type()));
 				gson.toJson(json, jsonWriter);
 			}
 
@@ -249,24 +331,54 @@ public class AsmServer extends GhidraScript {
 		}
 	}
 
-	private void computeCompletionsInStream(Gson gson, JsonWriter jsonWriter, List<InstructionLine> lines) throws IOException {
-		for (InstructionLine line : lines) {
+	private void computeCompletionsInStream(Gson gson, JsonWriter jsonWriter, List<AssemblyLine> lines) throws IOException {
+		for (AssemblyLine line : lines) {
 			jsonWriter.beginArray();
 
-			for (final AssemblyCompletion co : computeCompletions(line.address(), line.data())) {
-				JsonObject json = new JsonObject();
-				if (co instanceof AssemblyInstruction) {
-					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "bytes");
-					json.addProperty(ASSEMBLER_COMPLETION_DATA, co.getDisplay());
-				} else if (co instanceof AssemblySuggestion) {
-					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "suggestion");
-					json.addProperty(ASSEMBLER_COMPLETION_DATA, co.getText());
-				} else if (co instanceof AssemblyError) {
-					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
-					json.addProperty(ASSEMBLER_COMPLETION_DATA, co.getDisplay());
-				} else {
-					printerr(String.format("Unknown AssemblyCompletion '%s'", co));
+			if (line.type().equals(TYPE_INSTRUCTION)) {
+				for (final AssemblyCompletion co : computeCompletions(line.address(), line.data())) {
+					JsonObject json = new JsonObject();
+					if (co instanceof AssemblyInstruction) {
+						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "bytes");
+						json.addProperty(ASSEMBLER_COMPLETION_DATA, co.getDisplay());
+					} else if (co instanceof AssemblySuggestion) {
+						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "suggestion");
+						json.addProperty(ASSEMBLER_COMPLETION_DATA, co.getText());
+					} else if (co instanceof AssemblyError) {
+						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
+						json.addProperty(ASSEMBLER_COMPLETION_DATA, co.getDisplay());
+					} else {
+						printerr(String.format("Unknown AssemblyCompletion '%s'", co));
+					}
+					gson.toJson(json, jsonWriter);
 				}
+			} else if (line.type().equals(TYPE_DIRECTIVE_ORIGIN)) {
+				// Ignored since there's no instruction to update
+				JsonObject json = new JsonObject();
+				json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
+				gson.toJson(json, jsonWriter);
+			} else if (line.type().equals(TYPE_LABEL)) {
+				try {
+					putSymbol(line.address(), line.data());
+
+					JsonObject json = new JsonObject();
+					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
+					gson.toJson(json, jsonWriter);
+				} catch (Exception e) {
+					printerr(e.getMessage());
+					printerr(Arrays.stream(e.getStackTrace())
+							.map(StackTraceElement::toString)
+							.collect(Collectors.joining("\n\t")));
+
+					JsonObject json = new JsonObject();
+					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
+					json.addProperty(ASSEMBLER_COMPLETION_DATA, e.getMessage());
+					gson.toJson(json, jsonWriter);
+				}
+			} else {
+				JsonObject json = new JsonObject();
+				json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
+				json.addProperty(ASSEMBLER_COMPLETION_DATA, String.format("Unknown type '%s'", line.type()));
 				gson.toJson(json, jsonWriter);
 			}
 
@@ -284,16 +396,18 @@ public class AsmServer extends GhidraScript {
 				return;
 			}
 
-			Headers requestHeaders = he.getRequestHeaders();
-			int contentLength = Integer.parseInt(requestHeaders.getFirst("Content-length"));
+			he.getRequestHeaders();
 			InputStream is = he.getRequestBody();
+			byte[] data = is.readAllBytes();
+			//println(new String(data));
+			
 			List<String> instructions = new ArrayList<>();
-			try (JsonReader jsonReader = new JsonReader(new InputStreamReader(is))) {
+			try (JsonReader jsonReader = new JsonReader(new InputStreamReader(new ByteArrayInputStream(data)))) {
 				jsonReader.beginArray();
 
 				while (jsonReader.hasNext()) {
-					final InstructionLine line = parseInstructionLine(jsonReader);
-					println(String.format("Got line @ 0x%08x => '%s'", line.address().getUnsignedOffset(), line.data()));
+					final AssemblyLine line = parseAssemblyLine(jsonReader);
+					println(String.format("Got '%s' @ 0x%08x => '%s'", line.type(), line.address().getUnsignedOffset(), line.data()));
 
 					putAt(line.address(), line.data());
 					disassembler.disassemble(line.address(), new AddressSet(line.address()), false);
@@ -307,6 +421,10 @@ public class AsmServer extends GhidraScript {
 				jsonReader.endArray();
 			} catch (Exception e) {
 				printerr(e.getMessage());
+				printerr(Arrays.stream(e.getStackTrace())
+						.map(StackTraceElement::toString)
+						.collect(Collectors.joining("\n\t")));
+				
 				throw e;
 			}
 
@@ -363,6 +481,10 @@ public class AsmServer extends GhidraScript {
 			currentProgram.getMemory().setBytes(address, memBytes, 0, memBytes.length);
 		} catch (Exception e) {
 			printerr(e.getMessage());
+			printerr(Arrays.stream(e.getStackTrace())
+					.map(StackTraceElement::toString)
+					.collect(Collectors.joining("\n\t")));
+			
 			throw new RuntimeException(e);
 		}
 	}

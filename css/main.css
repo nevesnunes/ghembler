@@ -8,6 +8,7 @@ body {
 
 .row {
     display: flex;
+    margin-bottom: 8px;
 }
 .col {
     margin-right: 8px;
@@ -16,9 +17,11 @@ body {
 
 .bytes {
     border: 1px solid lightgrey;
-    flex: 0 0 400px;
+    height: 25rem;
+    flex: 1 0;
 }
 .editor {
     border: 1px solid lightgrey;
-    flex: 0 0 600px;
+    height: 25rem;
+    flex: 2 0;
 }

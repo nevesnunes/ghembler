@@ -4,7 +4,11 @@ Assembler and Disassembler for Ghidra processor modules featuring auto-completio
 
 Example using [Toshiba TLCS-900/H](https://github.com/nevesnunes/ghidra-tlcs900h):
 
-![](./example.png)
+![](./img/1.png)
+
+Example using x86-64 with directives:
+
+![](./img/2.png)
 
 `Save patch` generates a Python script that applies instructions at the given base offset to an input file:
 

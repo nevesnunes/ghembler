@@ -22,14 +22,23 @@
     </div>
 
     <div class="row">
-        <div class="col bytes" id="bytes" style="width: 400px; height: 400px;">
+        <div class="col bytes" id="bytes">
         </div>
 
-        <div class="col editor" id="editor" style="width: 600px; height: 400px;">
+        <div class="col editor" id="editor">
         </div>
     </div>
-    <script src="node_modules/file-saver/dist/FileSaver.js"></script> 
-    <script src="node_modules/monaco-editor/min/vs/loader.js"></script> 
+
+    <div class="content">
+      <h4>Supported Directives</h4>
+      <ul>
+          <li><code>.lbl $ASCII</code>: Create label at line offset in program's symbol table, use it in completions;</li>
+          <li><code>.org $HEX</code>: Override base offset to given origin offset;</li>
+      </ul>
+    </div>
+
+    <script src="node_modules/file-saver/dist/FileSaver.js"></script>
+    <script src="node_modules/monaco-editor/min/vs/loader.js"></script>
     <script src="src/editor.js"></script>
     <link type="text/css" rel="stylesheet" href="css/bulma.css">
     <link type="text/css" rel="stylesheet" href="css/main.css">
