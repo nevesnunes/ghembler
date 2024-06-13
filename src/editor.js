@@ -1,15 +1,21 @@
 require.config({ paths: { vs: '../node_modules/monaco-editor/min/vs' } });
 
 require(['vs/editor/editor.main'], function () {
+    //
     // Constants
+    //
 
     const LANGUAGE_EDITOR = 'langEditor';
     const LANGUAGE_BYTES = 'langBytes';
+
     const OWNER_EDITOR = 'ownerEditor';
     const OWNER_BYTES = 'ownerBytes';
+
     const UNKNOWN_BYTES = '??';
 
+    //
     // Helper methods
+    //
 
     const isDirective = (line) => {
         return /^\s*\.[0-9a-zA-Z]+:/.test(line);
@@ -117,7 +123,7 @@ require(['vs/editor/editor.main'], function () {
             const modelBytes = instanceBytes.getModel();
             const modelEditor = instanceEditor.getModel();
             for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
-                let line = modelEditor.getLineContent(i).trimStart();
+                let line = modelEditor.getLineContent(i).trim();
                 if (!line) {
                     emptyLines.add(i);
                 } else if (isDirective(line)) {
@@ -191,6 +197,7 @@ require(['vs/editor/editor.main'], function () {
                 }
             }
 
+            isModelBytesSync = true;
             instanceBytes.setValue(cacheBytes.join('\n'));
         })();
     };
@@ -208,11 +215,53 @@ require(['vs/editor/editor.main'], function () {
             linesToAdd--;
         }
 
+        isModelBytesSync = true;
         const editOperation = {identifier: id, range: range, text: text, forceMoveMarkers: true};
         instanceBytes.executeEdits("custom-code", [ editOperation ]);
     };
 
-    const syncDisassemblyLine = function(lineNumber, text) {
+    const syncAssemblyEditor = function() {
+        (async () => {
+            let baseOffset = parseBaseOffset();
+            let cacheAssemblyEditor = [];
+            let emptyLines = new Set();
+            let requestLines = [];
+            const modelBytes = instanceBytes.getModel();
+            const modelEditor = instanceEditor.getModel();
+            for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
+                let line = modelBytes.getLineContent(i).trim();
+                if (!line) {
+                    emptyLines.add(i);
+                } else {
+                    requestLines.push({
+                        "address": baseOffset,
+                        "data": line
+                    });
+                }
+            }
+
+            let disassemblySet = await fetchDisassembly(requestLines);
+
+            let disassemblyIndex = 0;
+            for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
+                if (emptyLines.has(i)) {
+                    cacheAssemblyEditor.push('');
+                } else if (disassemblyIndex < disassemblySet.length) {
+                    let disassembly = disassemblySet[disassemblyIndex];
+                    cacheAssemblyEditor.push(disassembly);
+
+                    disassemblyIndex++;
+                } else {
+                    console.error(`OOB disassemblyIndex ${disassemblyIndex}`);
+                }
+            }
+
+            isModelEditorSync = true;
+            instanceEditor.setValue(cacheAssemblyEditor.join('\n'));
+        })();
+    };
+
+    const syncAssemblyLine = function(lineNumber, text) {
         const range = new monaco.Range(lineNumber, 0, lineNumber, 9999);
         const id = { major: 1, minor: 1 };
 
@@ -225,11 +274,14 @@ require(['vs/editor/editor.main'], function () {
             linesToAdd--;
         }
 
+        isModelEditorSync = true;
         const editOperation = {identifier: id, range: range, text: text, forceMoveMarkers: true};
         instanceEditor.executeEdits("custom-code", [ editOperation ]);
     };
 
+    //
     // Language methods
+    //
 
     monaco.languages.register({ id: LANGUAGE_EDITOR });
 
@@ -346,7 +398,7 @@ require(['vs/editor/editor.main'], function () {
                     "data": line
                 }]);
                 if (disassembledLines.length > 0) {
-                    syncDisassemblyLine(position.lineNumber, disassembledLines[0]);
+                    syncAssemblyLine(position.lineNumber, disassembledLines[0]);
                     isValidCompletion = true;
                 }
             }
@@ -368,9 +420,18 @@ require(['vs/editor/editor.main'], function () {
         }
     });
 
+    //
     // State
+    //
 
-    var isPasted = false;
+    // Prevent `onDidChangeModelContent()` callbacks from executing when
+    // changes were done during syncs, which must be done in a single
+    // operation for this to work (either a single call to `setValue()`
+    // or `executeEdits()`).
+    var isModelBytesSync = false;
+    var isModelEditorSync = false;
+
+    var previousBytesLineCount = 0;
     var previousInstructionLineCount = 0;
 
     var instanceEditor = monaco.editor.create(
@@ -392,7 +453,9 @@ require(['vs/editor/editor.main'], function () {
         }
     );
 
+    //
     // Handlers
+    //
 
     const commandSyncBytesId = instanceEditor.addCommand(
         0,
@@ -416,18 +479,32 @@ require(['vs/editor/editor.main'], function () {
             monaco.editor.setModelMarkers(instanceEditor.getModel(), OWNER_EDITOR, []);
         }
 
-        if (!isPasted && (previousInstructionLineCount != modelEditor.getLineCount())) {
+        if (previousInstructionLineCount != modelEditor.getLineCount()) {
             previousInstructionLineCount = modelEditor.getLineCount();
-            syncBytes();
+            if (isModelEditorSync) {
+                isModelEditorSync = false;
+            } else {
+                syncBytes();
+            }
         }
     });
 
-    instanceEditor.onDidPaste((_) => {
-        try {
-            isPasted = true;
-            syncBytes();
-        } finally {
-            isPasted = false;
+    instanceBytes.onDidChangeModelContent((_) => {
+        const modelBytes = instanceBytes.getModel();
+        const previousMarkers = monaco.editor.getModelMarkers();
+        if (previousMarkers.length > 0
+            && previousMarkers[0].owner === OWNER_BYTES
+            && instanceBytes.getPosition().lineNumber === previousMarkers[0].startLineNumber) {
+            monaco.editor.setModelMarkers(instanceBytes.getModel(), OWNER_BYTES, []);
+        }
+
+        if (previousBytesLineCount != modelBytes.getLineCount()) {
+            previousBytesLineCount = modelBytes.getLineCount();
+            if (isModelBytesSync) {
+                isModelBytesSync = false;
+            } else {
+                syncAssemblyEditor();
+            }
         }
     });
 

@@ -19,12 +19,22 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonWriter;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
 
 import generic.theme.GThemeDefaults.Colors;
 import ghidra.app.plugin.assembler.Assembler;
@@ -36,36 +46,20 @@ import ghidra.app.plugin.assembler.sleigh.sem.AssemblyResolution;
 import ghidra.app.plugin.assembler.sleigh.sem.AssemblyResolutionResults;
 import ghidra.app.plugin.assembler.sleigh.sem.AssemblyResolvedPatterns;
 import ghidra.app.plugin.core.assembler.AssemblyDualTextField.AssemblyCompletion;
-import ghidra.app.plugin.processors.sleigh.SleighInstructionPrototype;
 import ghidra.app.script.GhidraScript;
-import ghidra.framework.store.LockException;
 import ghidra.program.disassemble.Disassembler;
 import ghidra.program.disassemble.DisassemblerMessageListener;
 import ghidra.program.flatapi.FlatProgramAPI;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSet;
-import ghidra.program.model.lang.Language;
-import ghidra.program.model.lang.Register;
-import ghidra.program.model.lang.RegisterValue;
 import ghidra.program.model.listing.Instruction;
-import ghidra.program.model.listing.Program;
+import ghidra.program.model.mem.MemoryAccessException;
 import ghidra.program.model.mem.MemoryBlock;
-import ghidra.program.model.mem.MemoryBlockException;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.util.NumericUtilities;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.exception.InvalidInputException;
-import ghidra.util.exception.NotFoundException;
-
-import com.sun.net.httpserver.Headers;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
-
-import com.google.gson.*;
-import com.google.gson.stream.JsonReader;
-import com.google.gson.stream.JsonWriter;
 
 public class AsmServer extends GhidraScript {
 
@@ -86,6 +80,8 @@ public class AsmServer extends GhidraScript {
 	private static final String TYPE_DIRECTIVE_LABEL = "label";
 	private static final String TYPE_DIRECTIVE_ORIGIN = "origin";
 	private static final String TYPE_INSTRUCTION = "instruction";
+
+	private static final String UNKNOWN_BYTES = "??";
 
 	// Either assembled hex bytes or disassembled display text
 	private record AssemblyLine(Address address, String type, String data, long previousLength) {
@@ -177,29 +173,11 @@ public class AsmServer extends GhidraScript {
 			he.getRequestHeaders();
 			InputStream is = he.getRequestBody();
 			byte[] data = is.readAllBytes();
-			//println(new String(data));
+			// println(new String(data));
 
-			List<AssemblyLine> lines = new ArrayList<>();
-			try (JsonReader jsonReader = new JsonReader(new InputStreamReader(new ByteArrayInputStream(data)))) {
-				jsonReader.beginArray();
-
-				while (jsonReader.hasNext()) {
-					AssemblyLine line = parseAssemblyLine(jsonReader);
-					println(String.format("Got '%s' @ 0x%08x => '%s'", line.type(), line.address().getUnsignedOffset(), line.data()));
-					lines.add(line);
-				}
-
-				jsonReader.endArray();
-			} catch (Exception e) {
-				printerr(e.getMessage());
-				printerr(Arrays.stream(e.getStackTrace())
-						.map(StackTraceElement::toString)
-						.collect(Collectors.joining("\n\t")));
-				
-				throw e;
-			}
-
+			List<AssemblyLine> lines = parseAssemblyLines(data);
 			boolean isBatch = lines.size() > 1;
+
 			he.getResponseHeaders().put("Access-Control-Allow-Origin", Collections.singletonList("*"));
 			he.sendResponseHeaders(HttpURLConnection.HTTP_OK, 0);
 			Gson gson = new GsonBuilder().setPrettyPrinting().create();
@@ -220,24 +198,44 @@ public class AsmServer extends GhidraScript {
 				printerr(Arrays.stream(e.getStackTrace())
 						.map(StackTraceElement::toString)
 						.collect(Collectors.joining("\n\t")));
-				
-				throw e;
+
+				throw new RuntimeException(e);
 			} finally {
 				he.close();
 			}
 		}
 	}
 
-	private void putSymbol(Address address, String name) throws InvalidInputException {
-		currentProgram.getSymbolTable().getSymbols(name).forEach(Symbol::delete);
-		currentProgram.getSymbolTable().createLabel(
-				address,
-				name,
-				currentProgram.getGlobalNamespace(),
-				SourceType.USER_DEFINED);
+	private List<AssemblyLine> parseAssemblyLines(byte[] data) {
+		final List<AssemblyLine> lines = new ArrayList<>();
+		try (final JsonReader jsonReader = new JsonReader(new InputStreamReader(new ByteArrayInputStream(data)))) {
+			jsonReader.beginArray();
+
+			while (jsonReader.hasNext()) {
+				AssemblyLine line = parseAssemblyLine(jsonReader);
+				println(String.format("Got '%s' @ 0x%08x => '%s'",
+						line.type(),
+						line.address().getUnsignedOffset(),
+						line.data()));
+				lines.add(line);
+			}
+
+			jsonReader.endArray();
+		} catch (Exception e) {
+			throw new RuntimeException(e);
+		}
+
+		return lines;
 	}
 
-	private void computeCompletionsInBatch(Gson gson, JsonWriter jsonWriter, List<AssemblyLine> lines) throws IOException {
+	private void putSymbol(Address address, String name) throws InvalidInputException {
+		currentProgram.getSymbolTable().getSymbols(name).forEach(Symbol::delete);
+		currentProgram.getSymbolTable()
+				.createLabel(address, name, currentProgram.getGlobalNamespace(), SourceType.USER_DEFINED);
+	}
+
+	private void computeCompletionsInBatch(Gson gson, JsonWriter jsonWriter, List<AssemblyLine> lines)
+			throws IOException {
 		Address nextAddress = lines.get(0).address();
 		for (AssemblyLine line : lines) {
 			jsonWriter.beginArray();
@@ -257,7 +255,7 @@ public class AsmServer extends GhidraScript {
 							candidateInstruction = (AssemblyInstruction) co;
 						}
 					} else if (co instanceof AssemblySuggestion) {
-						//println("Skipping AssemblySuggestion in batch mode");
+						// println("Skipping AssemblySuggestion in batch mode");
 					} else if (co instanceof AssemblyError) {
 						JsonObject json = new JsonObject();
 						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
@@ -267,12 +265,13 @@ public class AsmServer extends GhidraScript {
 						printerr(String.format("Unknown AssemblyCompletion '%s'", co));
 					}
 				}
-	
+
 				if (candidateInstruction != null) {
 					try {
-						byte[] memBytes = HexFormat.of().parseHex(candidateInstruction.getDisplay().replaceAll("\\s+", ""));
+						byte[] memBytes = HexFormat.of()
+								.parseHex(candidateInstruction.getDisplay().replaceAll("\\s+", ""));
 						nextAddress = toAddr(nextAddress.getUnsignedOffset() + memBytes.length);
-		
+
 						JsonObject json = new JsonObject();
 						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "bytes");
 						json.addProperty(ASSEMBLER_COMPLETION_DATA, candidateInstruction.getDisplay());
@@ -298,7 +297,7 @@ public class AsmServer extends GhidraScript {
 					gson.toJson(json, jsonWriter);
 				} else {
 					nextAddress = originAddress;
-					
+
 					JsonObject json = new JsonObject();
 					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
 					gson.toJson(json, jsonWriter);
@@ -347,7 +346,8 @@ public class AsmServer extends GhidraScript {
 		}
 	}
 
-	private void computeCompletionsInStream(Gson gson, JsonWriter jsonWriter, List<AssemblyLine> lines) throws IOException {
+	private void computeCompletionsInStream(Gson gson, JsonWriter jsonWriter, List<AssemblyLine> lines)
+			throws IOException {
 		for (AssemblyLine line : lines) {
 			jsonWriter.beginArray();
 
@@ -415,50 +415,75 @@ public class AsmServer extends GhidraScript {
 			he.getRequestHeaders();
 			InputStream is = he.getRequestBody();
 			byte[] data = is.readAllBytes();
-			//println(new String(data));
-			
-			List<String> instructions = new ArrayList<>();
-			try (JsonReader jsonReader = new JsonReader(new InputStreamReader(new ByteArrayInputStream(data)))) {
-				jsonReader.beginArray();
+			// println(new String(data));
 
-				while (jsonReader.hasNext()) {
-					final AssemblyLine line = parseAssemblyLine(jsonReader);
-					println(String.format("Got '%s' @ 0x%08x => '%s'", line.type(), line.address().getUnsignedOffset(), line.data()));
-
-					putAt(line.address(), line.data());
-					disassembler.disassemble(line.address(), new AddressSet(line.address()), false);
-					final Instruction ins = currentProgram.getListing().getInstructionAt(line.address());
-					if (ins == null) {
-						throw new RuntimeException(String.format("Null instruction @ 0x%08x", line.address().getUnsignedOffset()));
-					}
-					instructions.add(ins.toString());
-				}
-
-				jsonReader.endArray();
-			} catch (Exception e) {
-				printerr(e.getMessage());
-				printerr(Arrays.stream(e.getStackTrace())
-						.map(StackTraceElement::toString)
-						.collect(Collectors.joining("\n\t")));
-				
-				throw e;
-			}
+			List<AssemblyLine> lines = parseAssemblyLines(data);
+			boolean isBatch = lines.size() > 1;
 
 			he.getResponseHeaders().put("Access-Control-Allow-Origin", Collections.singletonList("*"));
 			he.sendResponseHeaders(HttpURLConnection.HTTP_OK, 0);
 			Gson gson = new GsonBuilder().setPrettyPrinting().create();
 			try (OutputStream os = he.getResponseBody()) {
 				JsonWriter jsonWriter = new JsonWriter(new OutputStreamWriter(os));
-				JsonArray jsonArray = new JsonArray();
-				for (final String ins : instructions) {
-					jsonArray.add(new JsonPrimitive(ins));
+
+				if (isBatch) {
+					computeDisassemblyInBatch(gson, jsonWriter, lines);
+				} else {
+					computeDisassemblyInStream(gson, jsonWriter, lines);
 				}
-				gson.toJson(jsonArray, jsonWriter);
+
 				jsonWriter.close();
+			} catch (Exception e) {
+				printerr(e.getMessage());
+				printerr(Arrays.stream(e.getStackTrace())
+						.map(StackTraceElement::toString)
+						.collect(Collectors.joining("\n\t")));
+
+				throw new RuntimeException(e);
 			} finally {
 				he.close();
 			}
 		}
+	}
+
+	private void computeDisassemblyInBatch(Gson gson, JsonWriter jsonWriter, List<AssemblyLine> lines)
+			throws MemoryAccessException {
+		JsonArray jsonArray = new JsonArray();
+
+		Address nextAddress = lines.get(0).address();
+		for (final AssemblyLine line : lines) {
+			putAt(nextAddress, line.data());
+			disassembler.disassemble(nextAddress, new AddressSet(nextAddress), false);
+			final Instruction ins = currentProgram.getListing().getInstructionAt(nextAddress);
+			if (ins == null) {
+				printerr(String.format("Null instruction @ 0x%08x", nextAddress.getUnsignedOffset()));
+				jsonArray.add(new JsonPrimitive(UNKNOWN_BYTES));
+			} else {
+				nextAddress = toAddr(nextAddress.getUnsignedOffset() + ins.getBytes().length);
+
+				jsonArray.add(new JsonPrimitive(ins.toString()));
+			}
+		}
+
+		gson.toJson(jsonArray, jsonWriter);
+	}
+
+	private void computeDisassemblyInStream(Gson gson, JsonWriter jsonWriter, List<AssemblyLine> lines) {
+		JsonArray jsonArray = new JsonArray();
+
+		for (final AssemblyLine line : lines) {
+			putAt(line.address(), line.data());
+			disassembler.disassemble(line.address(), new AddressSet(line.address()), false);
+			final Instruction ins = currentProgram.getListing().getInstructionAt(line.address());
+			if (ins == null) {
+				printerr(String.format("Null instruction @ 0x%08x", line.address().getUnsignedOffset()));
+				jsonArray.add(new JsonPrimitive(UNKNOWN_BYTES));
+			} else {
+				jsonArray.add(new JsonPrimitive(ins.toString()));
+			}
+		}
+
+		gson.toJson(jsonArray, jsonWriter);
 	}
 
 	private void addCORS(HttpExchange exchange, boolean isOptions) {
@@ -474,6 +499,8 @@ public class AsmServer extends GhidraScript {
 		if (hexBytes.isBlank()) {
 			throw new RuntimeException(String.format("Null bytes to put @ 0x%08x", address.getUnsignedOffset()));
 		}
+		println(String.format("Put @ 0x%08x = '%s'", address.getUnsignedOffset(), hexBytes));
+
 		byte[] memBytes = HexFormat.of().parseHex(hexBytes.replaceAll("\\s+", ""));
 		putAt(address, memBytes);
 	}
@@ -491,19 +518,16 @@ public class AsmServer extends GhidraScript {
 			if (!isContained) {
 				// Create a new 0x10000 sized memory block containing the given address
 				long startOffset = address.getUnsignedOffset() & 0xffff0000L;
-				MemoryBlock mb = fpa.createMemoryBlock(Long.toHexString(startOffset), fpa.toAddr(startOffset), null, 0x10000, false);
+				MemoryBlock mb = fpa.createMemoryBlock(Long
+						.toHexString(startOffset), fpa.toAddr(startOffset), null, 0x10000, false);
 				currentProgram.getMemory().convertToInitialized(mb, (byte) '\0');
 			} else {
 				// Clear any previously disassembled instructions
-				currentProgram.getListing().clearCodeUnits(address, toAddr(address.getUnsignedOffset() + memBytes.length), false);
+				currentProgram.getListing()
+						.clearCodeUnits(address, toAddr(address.getUnsignedOffset() + memBytes.length), false);
 			}
 			currentProgram.getMemory().setBytes(address, memBytes, 0, memBytes.length);
 		} catch (Exception e) {
-			printerr(e.getMessage());
-			printerr(Arrays.stream(e.getStackTrace())
-					.map(StackTraceElement::toString)
-					.collect(Collectors.joining("\n\t")));
-			
 			throw new RuntimeException(e);
 		}
 	}
@@ -519,7 +543,8 @@ public class AsmServer extends GhidraScript {
 				String buffer = err.getBuffer();
 				for (String s : err.getSuggestions()) {
 					if (s.startsWith(buffer)) {
-						result.add(new AssemblySuggestion(s.substring(buffer.length()), formatSuggestion(line, s, buffer)));
+						result.add(new AssemblySuggestion(s.substring(buffer.length()),
+								formatSuggestion(line, s, buffer)));
 					}
 				}
 			} else {
