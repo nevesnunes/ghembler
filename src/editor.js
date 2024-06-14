@@ -290,6 +290,7 @@ require(['vs/editor/editor.main'], function () {
             tokenizer: {
                 root: [
                     [/^\s*\.[0-9a-zA-Z]+:.*/, 'annotation'],
+                    [/[a-zA-Z][\w]*/, 'default' ],
                     [/0[xX][0-9a-fA-F]+/, 'number'],
                     [/\d+/, 'number'],
                     [/".*?"/, 'string'],
