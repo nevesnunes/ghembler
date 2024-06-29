@@ -434,7 +434,7 @@ require(['vs/editor/editor.main'], function () {
                 if (k.type === "suggestion") {
                     return result.concat({
                         label: line + k.data,
-                        kind: "monaco.languages.CompletionItemKind.Keyword",
+                        kind: monaco.languages.CompletionItemKind.Property,
                         insertText: line + k.data,
                         command: {id: 'editor.action.triggerSuggest', title: 123} // Get next completions for this line with added token
                     });
@@ -442,7 +442,7 @@ require(['vs/editor/editor.main'], function () {
                     isValidCompletion = true;
                     let suggestion = {
                         label: `${line} => ${k.data}`,
-                        kind: "monaco.languages.CompletionItemKind.Keyword"
+                        kind: monaco.languages.CompletionItemKind.Property
                     };
                     Object.defineProperty(suggestion, 'insertText', {
                       get: function() {
