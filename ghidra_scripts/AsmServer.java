@@ -19,8 +19,10 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
@@ -465,7 +467,19 @@ public class AsmServer extends GhidraScript {
 
 		Address nextAddress = lines.get(0).address();
 		for (final AssemblyLine line : lines) {
-			putAt(nextAddress, line.data());
+			try {
+				putAt(nextAddress, line.data());
+			} catch (Exception e) {
+				printerr(e.getMessage());
+				printerr(Arrays.stream(e.getStackTrace())
+						.map(StackTraceElement::toString)
+						.collect(Collectors.joining("\n\t")));
+
+				jsonArray.add(new JsonPrimitive(UNKNOWN_BYTES));
+
+				continue;
+			}
+
 			disassembler.disassemble(nextAddress, new AddressSet(nextAddress), false);
 			final Instruction ins = currentProgram.getListing().getInstructionAt(nextAddress);
 			if (ins == null) {
@@ -485,7 +499,19 @@ public class AsmServer extends GhidraScript {
 		JsonArray jsonArray = new JsonArray();
 
 		for (final AssemblyLine line : lines) {
-			putAt(line.address(), line.data());
+			try {
+				putAt(line.address(), line.data());
+			} catch (Exception e) {
+				printerr(e.getMessage());
+				printerr(Arrays.stream(e.getStackTrace())
+						.map(StackTraceElement::toString)
+						.collect(Collectors.joining("\n\t")));
+
+				jsonArray.add(new JsonPrimitive(UNKNOWN_BYTES));
+
+				continue;
+			}
+
 			disassembler.disassemble(line.address(), new AddressSet(line.address()), false);
 			final Instruction ins = currentProgram.getListing().getInstructionAt(line.address());
 			if (ins == null) {
@@ -508,7 +534,7 @@ public class AsmServer extends GhidraScript {
 		}
 	}
 
-	private void putAt(Address address, String hexBytes) {
+	private void putAt(Address address, String hexBytes) throws Exception {
 		if (hexBytes.isBlank()) {
 			throw new RuntimeException(String.format("Null bytes to put @ 0x%08x", address.getUnsignedOffset()));
 		}
@@ -518,7 +544,9 @@ public class AsmServer extends GhidraScript {
 		putAt(address, memBytes);
 	}
 
-	private void putAt(Address address, byte[] memBytes) {
+	private void putAt(Address address, byte[] memBytes) throws Exception {
+		normalizeBlocks();
+
 		boolean isContained = false;
 		for (MemoryBlock mb : currentProgram.getMemory().getBlocks()) {
 			if (mb.contains(address)) {
@@ -527,21 +555,62 @@ public class AsmServer extends GhidraScript {
 			}
 		}
 
-		try {
-			if (!isContained) {
-				// Create a new 0x10000 sized memory block containing the given address
-				long startOffset = address.getUnsignedOffset() & 0xffff0000L;
-				MemoryBlock mb = fpa.createMemoryBlock(Long
-						.toHexString(startOffset), fpa.toAddr(startOffset), null, 0x10000, false);
-				currentProgram.getMemory().convertToInitialized(mb, (byte) '\0');
-			} else {
-				// Clear any previously disassembled instructions
-				currentProgram.getListing()
-						.clearCodeUnits(address, toAddr(address.getUnsignedOffset() + memBytes.length), false);
+		if (!isContained) {
+			// Create a new 0x10000 sized memory block containing the given address
+			long startOffset = address.getUnsignedOffset() & 0xffff0000L;
+			MemoryBlock mb = fpa.createMemoryBlock(Long
+					.toHexString(startOffset), fpa.toAddr(startOffset), null, 0x10000, false);
+			currentProgram.getMemory().convertToInitialized(mb, (byte) '\0');
+		} else {
+			// Clear any previously disassembled instructions
+			currentProgram.getListing()
+					.clearCodeUnits(address, toAddr(address.getUnsignedOffset() + memBytes.length), false);
+		}
+
+		currentProgram.getMemory().setBytes(address, memBytes, 0, memBytes.length);
+	}
+
+	private void normalizeBlocks() throws Exception {
+		// Fill any gaps in existing blocks to make 0x10000 sized chunks
+		Map<Address, Address> memoryBlockAddresses = new TreeMap<>();
+		for (MemoryBlock mb : currentProgram.getMemory().getBlocks()) {
+			memoryBlockAddresses.put(mb.getStart(), mb.getEnd());
+		}
+
+		long prevStart = 0;
+		long prevEnd = 0;
+		for (Map.Entry<Address, Address> entry : memoryBlockAddresses.entrySet()) {
+			if (prevEnd == 0) {
+				prevStart = entry.getKey().getUnsignedOffset();
+				prevEnd = entry.getValue().getUnsignedOffset();
+
+				long candidateStart = prevStart & 0xfffff000L;
+				if (candidateStart != 0) {
+					MemoryBlock mb = fpa.createMemoryBlock(Long
+							.toHexString(0), fpa.toAddr(0), null, prevStart, false);
+					currentProgram.getMemory().convertToInitialized(mb, (byte) '\0');
+				}
+
+				continue;
 			}
-			currentProgram.getMemory().setBytes(address, memBytes, 0, memBytes.length);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
+
+			long currStart = entry.getKey().getUnsignedOffset();
+			long currEnd = entry.getValue().getUnsignedOffset();
+			if (prevEnd + 1 < currStart) {
+				MemoryBlock mb = fpa.createMemoryBlock(Long
+						.toHexString(prevEnd + 1), fpa.toAddr(prevEnd + 1), null, currStart - (prevEnd + 1), false);
+				currentProgram.getMemory().convertToInitialized(mb, (byte) '\0');
+			}
+
+			prevStart = currStart;
+			prevEnd = currEnd;
+		}
+
+		long lastEnd = (prevEnd & 0xffff0000L) + 0xffffL;
+		if (prevEnd != lastEnd) {
+			MemoryBlock mb = fpa.createMemoryBlock(Long
+					.toHexString(prevEnd + 1), fpa.toAddr(prevEnd + 1), null, lastEnd - prevEnd, false);
+			currentProgram.getMemory().convertToInitialized(mb, (byte) '\0');
 		}
 	}
 
@@ -596,16 +665,8 @@ public class AsmServer extends GhidraScript {
 	 * assembling
 	 */
 	static class AssemblyError extends AssemblyCompletion {
-		private String text;
-
 		public AssemblyError(String text, String desc) {
 			super(text, desc, Colors.ERROR, 1);
-			this.text = text;
-		}
-
-		@Override
-		public String getText() {
-			return text;
 		}
 	}
 
@@ -616,11 +677,6 @@ public class AsmServer extends GhidraScript {
 	static class AssemblySuggestion extends AssemblyCompletion {
 		public AssemblySuggestion(String text, String display) {
 			super(text, display, null, 1);
-		}
-
-		@Override
-		public boolean getCanDefault() {
-			return true;
 		}
 	}
 
