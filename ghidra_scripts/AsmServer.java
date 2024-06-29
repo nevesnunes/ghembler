@@ -251,7 +251,6 @@ public class AsmServer extends GhidraScript {
 						// we need to compute the next instruction's address, picking one of the
 						// possible encodings (which might not match what the user previously picked).
 						long candidateDiff = Math.abs(co.getDisplay().length() - line.previousLength);
-						// println(String.format("candidateInstruction @ %s cand=(%s-%s)=%s last=%s", nextAddress, co.getDisplay().length(), line.previousLength, candidateDiff, lastDiff));
 						if (candidateDiff < lastDiff) {
 							lastDiff = candidateDiff;
 							candidateInstruction = (AssemblyInstruction) co;
@@ -260,7 +259,7 @@ public class AsmServer extends GhidraScript {
 						// println("Skipping AssemblySuggestion in batch mode");
 					} else if (co instanceof AssemblyError) {
 						JsonObject json = new JsonObject();
-						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
+						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "assembly_error");
 						json.addProperty(ASSEMBLER_COMPLETION_DATA, co.getDisplay());
 						gson.toJson(json, jsonWriter);
 					} else {
@@ -305,20 +304,32 @@ public class AsmServer extends GhidraScript {
 					gson.toJson(json, jsonWriter);
 				}
 			} else if (line.type().equals(TYPE_DIRECTIVE_FILL)) {
-				String[] parts = line.data().split(",");
-				long n = Long.parseLong(parts[0]);
-				byte[] memBytes = HexFormat.of().parseHex(parts[1]);
-				StringBuilder outputBytes = new StringBuilder();
-				for (long i = 0; i < n; i++) {
-					putAt(nextAddress, memBytes);
-					nextAddress = toAddr(nextAddress.getUnsignedOffset() + memBytes.length);
-					outputBytes.append(HexFormat.ofDelimiter(" ").formatHex(memBytes) + " ");
-				}
+				try {
+					String[] parts = line.data().split(",");
+					long n = Long.parseLong(parts[0]);
+					byte[] memBytes = HexFormat.of().parseHex(parts[1]);
+					StringBuilder outputBytes = new StringBuilder();
+					for (long i = 0; i < n; i++) {
+						putAt(nextAddress, memBytes);
+						nextAddress = toAddr(nextAddress.getUnsignedOffset() + memBytes.length);
+						outputBytes.append(HexFormat.ofDelimiter(" ").formatHex(memBytes) + " ");
+					}
 
-				JsonObject json = new JsonObject();
-				json.addProperty(ASSEMBLER_COMPLETION_TYPE, "bytes");
-				json.addProperty(ASSEMBLER_COMPLETION_DATA, outputBytes.toString());
-				gson.toJson(json, jsonWriter);
+					JsonObject json = new JsonObject();
+					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "bytes");
+					json.addProperty(ASSEMBLER_COMPLETION_DATA, outputBytes.toString());
+					gson.toJson(json, jsonWriter);
+				} catch (Exception e) {
+					printerr(e.getMessage());
+					printerr(Arrays.stream(e.getStackTrace())
+							.map(StackTraceElement::toString)
+							.collect(Collectors.joining("\n\t")));
+
+					JsonObject json = new JsonObject();
+					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
+					json.addProperty(ASSEMBLER_COMPLETION_DATA, e.getMessage());
+					gson.toJson(json, jsonWriter);
+				}
 			} else if (line.type().equals(TYPE_DIRECTIVE_LABEL)) {
 				try {
 					putSymbol(nextAddress, line.data());
@@ -363,7 +374,7 @@ public class AsmServer extends GhidraScript {
 						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "suggestion");
 						json.addProperty(ASSEMBLER_COMPLETION_DATA, co.getText());
 					} else if (co instanceof AssemblyError) {
-						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
+						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "assembly_error");
 						json.addProperty(ASSEMBLER_COMPLETION_DATA, co.getDisplay());
 					} else {
 						printerr(String.format("Unknown AssemblyCompletion '%s'", co));

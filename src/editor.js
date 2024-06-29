@@ -11,6 +11,7 @@ require(['vs/editor/editor.main'], function () {
     const OWNER_EDITOR = 'ownerEditor';
     const OWNER_BYTES = 'ownerBytes';
 
+    const MAX = 99999;
     const INVALID_LINE = -1;
     const UNKNOWN_BYTES = '??';
 
@@ -184,6 +185,7 @@ require(['vs/editor/editor.main'], function () {
 
             let completionSet = await fetchCompletions(requestLines);
 
+            let markers = [];
             let completionIndex = 0;
             for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
                 if (emptyLines.has(i)) {
@@ -197,18 +199,36 @@ require(['vs/editor/editor.main'], function () {
                         } else if (completion.type === "ok") {
                             // Used by directives, display them as blank
                             hexBytes = '';
-                        } else if (completion.type === "error") {
+                        } else if (completion.type === "assembly_error") {
                             // x86 spams several constructor errors...
                             // console.error(completion.data);
+                        } else if (completion.type === "error") {
+                            markers.push({
+                                startLineNumber: i,
+                                endLineNumber: i,
+                                startColumn: 0,
+                                endColumn: MAX,
+                                message: completion.data,
+                                severity: monaco.MarkerSeverity.Error,
+                            });
                         }
                     });
                     cacheBytes.push(hexBytes);
 
                     completionIndex++;
                 } else {
-                    console.error(`OOB completionIndex ${completionIndex}`);
+                    markers.push({
+                        startLineNumber: i,
+                        endLineNumber: i,
+                        startColumn: 0,
+                        endColumn: MAX,
+                        message: `Line not in completion set (${completionIndex} >= ${completionSet.length})`,
+                        severity: monaco.MarkerSeverity.Error,
+                    });
                 }
             }
+
+            monaco.editor.setModelMarkers(instanceEditor.getModel(), OWNER_EDITOR, markers);
 
             isModelBytesSync = true;
             instanceBytes.setValue(cacheBytes.join('\n'));
@@ -243,7 +263,7 @@ require(['vs/editor/editor.main'], function () {
         newRangeLines[0] = newRangeLines[0] + modelEditor.getLineContent(change.range.startLineNumber).substr(0, change.range.startColumn);
         let newLastIdx = newRangeLines.length - 1;
         if (newLastIdx > 0) {
-            newRangeLines[newLastIdx] = newRangeLines[newLastIdx] + modelEditor.getLineContent(change.range.endLineNumber).substr(change.range.endColumn, 99999);
+            newRangeLines[newLastIdx] = newRangeLines[newLastIdx] + modelEditor.getLineContent(change.range.endLineNumber).substr(change.range.endColumn, MAX);
         }
         let rangeIdx = 0;
         for (let i = change.range.startLineNumber; i < change.range.endLineNumber + 1; i++) {
@@ -266,14 +286,14 @@ require(['vs/editor/editor.main'], function () {
         // Nothing matched, might be a paste on an empty editor?
         if (Object.keys(newCache).length == 0) {
             cacheOffset = 0;
-            cacheOffsetLine = 99999;
+            cacheOffsetLine = MAX;
         } else {
             cache = newCache;
         }
     };
 
     const syncBytesLine = function(lineNumber, text) {
-        const range = new monaco.Range(lineNumber, 0, lineNumber, 9999);
+        const range = new monaco.Range(lineNumber, 0, lineNumber, MAX);
         const id = { major: 1, minor: 1 };
 
         // If the target editor has less lines than the target line to edit,
@@ -312,6 +332,7 @@ require(['vs/editor/editor.main'], function () {
 
             let disassemblySet = await fetchDisassembly(requestLines);
 
+            let markers = [];
             let disassemblyIndex = 0;
             for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
                 if (emptyLines.has(i)) {
@@ -322,9 +343,18 @@ require(['vs/editor/editor.main'], function () {
 
                     disassemblyIndex++;
                 } else {
-                    console.error(`OOB disassemblyIndex ${disassemblyIndex}`);
+                    markers.push({
+                        startLineNumber: i,
+                        endLineNumber: i,
+                        startColumn: 0,
+                        endColumn: MAX,
+                        message: `Line not in disassembly set (${disassemblyIndex} >= ${disassemblySet.length})`,
+                        severity: monaco.MarkerSeverity.Error,
+                    });
                 }
             }
+
+            monaco.editor.setModelMarkers(instanceEditor.getModel(), OWNER_EDITOR, markers);
 
             isModelEditorSync = true;
             instanceEditor.setValue(cacheAssemblyEditor.join('\n'));
@@ -332,7 +362,7 @@ require(['vs/editor/editor.main'], function () {
     };
 
     const syncAssemblyLine = function(lineNumber, text) {
-        const range = new monaco.Range(lineNumber, 0, lineNumber, 9999);
+        const range = new monaco.Range(lineNumber, 0, lineNumber, MAX);
         const id = { major: 1, minor: 1 };
 
         // If the target editor has less lines than the target line to edit,
@@ -515,7 +545,7 @@ require(['vs/editor/editor.main'], function () {
 
     var cache = {};
     var cacheOffset = 0;
-    var cacheOffsetLine = 99999;
+    var cacheOffsetLine = MAX;
 
     var instanceEditor = monaco.editor.create(
         document.getElementById('editor'), {
