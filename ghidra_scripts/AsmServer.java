@@ -229,6 +229,7 @@ public class AsmServer extends GhidraScript {
 	}
 
 	private void putSymbol(Address address, String name) throws InvalidInputException {
+		println(String.format("putSymbol '%s' @ 0x%08x", name, address.getUnsignedOffset()));
 		currentProgram.getSymbolTable().getSymbols(name).forEach(Symbol::delete);
 		currentProgram.getSymbolTable()
 				.createLabel(address, name, currentProgram.getGlobalNamespace(), SourceType.USER_DEFINED);
@@ -250,7 +251,7 @@ public class AsmServer extends GhidraScript {
 						// we need to compute the next instruction's address, picking one of the
 						// possible encodings (which might not match what the user previously picked).
 						long candidateDiff = Math.abs(co.getDisplay().length() - line.previousLength);
-						//printerr(String.format("candidateInstruction @ %s cand=(%s-%s)=%s last=%s", nextAddress, co.getDisplay().length(), line.previousLength, candidateDiff, lastDiff));
+						// println(String.format("candidateInstruction @ %s cand=(%s-%s)=%s last=%s", nextAddress, co.getDisplay().length(), line.previousLength, candidateDiff, lastDiff));
 						if (candidateDiff < lastDiff) {
 							lastDiff = candidateDiff;
 							candidateInstruction = (AssemblyInstruction) co;
