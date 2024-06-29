@@ -138,7 +138,6 @@ require(['vs/editor/editor.main'], function () {
                     }
                     let candidateFill = parseFillDirective(line);
                     if (candidateFill) {
-                        console.log(candidateFill);
                         requestLines.push({
                             "address": baseOffset,
                             "data": [candidateFill[1], candidateFill[3]].join(","),
@@ -222,6 +221,54 @@ require(['vs/editor/editor.main'], function () {
         const modelEditor = instanceEditor.getModel();
         for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
             cache[i] = modelEditor.getLineContent(i);
+        }
+    };
+
+    const updateCacheOnChanges = function(context, modelEditor) {
+        // FIXME: How to handle more than one change?
+        const change = context.changes[0];
+        const linesBefore = change.range.endLineNumber - change.range.startLineNumber;
+        const linesAfter = (change.text.match(/\n/g) || []).length;
+        cacheOffset = linesAfter - linesBefore;
+
+        let newCache = {};
+
+        // Before range: Still the same lines.
+        for (let i = 1; i < change.range.startLineNumber; i++) {
+            newCache[i] = cache[i];
+        }
+
+        // In range: We compare lines, but also account for existing chars in the start and end lines, which are not part of the changed range.
+        let newRangeLines = change.text.split('\n');
+        newRangeLines[0] = newRangeLines[0] + modelEditor.getLineContent(change.range.startLineNumber).substr(0, change.range.startColumn);
+        let newLastIdx = newRangeLines.length - 1;
+        if (newLastIdx > 0) {
+            newRangeLines[newLastIdx] = newRangeLines[newLastIdx] + modelEditor.getLineContent(change.range.endLineNumber).substr(change.range.endColumn, 99999);
+        }
+        let rangeIdx = 0;
+        for (let i = change.range.startLineNumber; i < change.range.endLineNumber + 1; i++) {
+            if (cache[i] == newRangeLines[rangeIdx]) {
+                newCache[i] = cache[i];
+            } else {
+                cacheOffsetLine = i;
+                break;
+            }
+            rangeIdx += 1;
+        }
+
+        // After range: Matching lines are offset, e.g. if new lines were added, then cached lines previously had smaller line numbers, or vice-versa.
+        for (let i = cacheOffsetLine; i < modelEditor.getLineCount() + 1; i++) {
+            if ((i - cacheOffset) in cache) {
+                newCache[i] = cache[i - cacheOffset];
+            }
+        }
+
+        // Nothing matched, might be a paste on an empty editor?
+        if (Object.keys(newCache).length == 0) {
+            cacheOffset = 0;
+            cacheOffsetLine = 99999;
+        } else {
+            cache = newCache;
         }
     };
 
@@ -522,49 +569,6 @@ require(['vs/editor/editor.main'], function () {
             syncBytes();
         }
     });
-
-    const updateCacheOnChanges = function(context, modelEditor) {
-        // FIXME: How to handle more than one change?
-        const change = context.changes[0];
-        const linesBefore = change.range.endLineNumber - change.range.startLineNumber;
-        const linesAfter = (change.text.match(/\n/g) || []).length;
-        cacheOffset = linesAfter - linesBefore;
-
-        let newCache = {};
-
-        // Before range: Still the same lines.
-        for (let i = 1; i < change.range.startLineNumber; i++) {
-            newCache[i] = cache[i];
-        }
-
-        // In range: We compare lines, but also account for existing chars in the start and end lines, which are not part of the changed range.
-        let newRangeLines = change.text.split('\n');
-        newRangeLines[0] = newRangeLines[0] + modelEditor.getLineContent(change.range.startLineNumber).substr(0, change.range.startColumn);
-        let newLastIdx = newRangeLines.length - 1;
-        if (newLastIdx > 0) {
-            newRangeLines[newLastIdx] = newRangeLines[newLastIdx] + modelEditor.getLineContent(change.range.endLineNumber).substr(change.range.endColumn, 99999);
-        }
-        let rangeIdx = 0;
-        for (let i = change.range.startLineNumber; i < change.range.endLineNumber + 1; i++) {
-            if (cache[i] == newRangeLines[rangeIdx]) {
-                newCache[i] = cache[i];
-            } else {
-                cacheOffsetLine = i;
-                break;
-            }
-            rangeIdx += 1;
-        }
-
-        // After range: Matching lines are offset, e.g. if new lines were added, then cached lines previously had smaller line numbers, or vice-versa.
-        for (let i = cacheOffsetLine; i < modelEditor.getLineCount() + 1; i++) {
-            if ((i - cacheOffset) in cache) {
-                newCache[i] = cache[i - cacheOffset];
-            }
-        }
-
-        console.log(cache, newCache);
-        cache = newCache;
-    };
 
     instanceBytes.onDidChangeModelContent((_) => {
         const modelBytes = instanceBytes.getModel();
