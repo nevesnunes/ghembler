@@ -573,7 +573,7 @@ require(['vs/editor/editor.main'], function () {
 
 import sys
 
-with open(sys.argv[1], 'wb') as f:
+with open(sys.argv[1], 'r+b') as f:
     f.seek(${baseOffset})
 
     b = b''

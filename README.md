@@ -17,7 +17,7 @@ Example using x86-64 with directives:
 
 import sys
 
-with open(sys.argv[1], 'wb') as f:
+with open(sys.argv[1], 'r+b') as f:
     f.seek(0x8000)
 
     b = b''
