@@ -11,6 +11,7 @@ require(['vs/editor/editor.main'], function () {
     const OWNER_EDITOR = 'ownerEditor';
     const OWNER_BYTES = 'ownerBytes';
 
+    const INVALID_LINE = -1;
     const UNKNOWN_BYTES = '??';
 
     //
@@ -158,7 +159,11 @@ require(['vs/editor/editor.main'], function () {
                     }
                 } else {
                     let previousLength = 0;
-                    if (modelBytes.getLineCount() >= i) {
+                    if (i == currentSyncBytesLineNumber) {
+                        previousLength = currentSyncBytesLineLength;
+                        currentSyncBytesLineNumber = INVALID_LINE;
+                        currentSyncBytesLineLength = 0;
+                    } else if (modelBytes.getLineCount() >= i) {
                         previousLength = modelBytes.getLineContent(i).length;
                     }
                     requestLines.push({
@@ -340,16 +345,24 @@ require(['vs/editor/editor.main'], function () {
                     });
                 } else if (k.type === "bytes") {
                     isValidCompletion = true;
-                    return result.concat({
+                    let suggestion = {
                         label: `${line} => ${k.data}`,
-                        kind: "monaco.languages.CompletionItemKind.Keyword",
-                        insertText: line,
-                        command: {
-                            id: commandSyncBytesId,
-                            title: "Sync bytes",
-                            arguments: [position, line, k.data]
-                        }
-                    })
+                        kind: "monaco.languages.CompletionItemKind.Keyword"
+                    };
+                    Object.defineProperty(suggestion, 'insertText', {
+                      get: function() {
+                          // Since onDidChangeModelContent() gets called
+                          // before a completion item's command, we instead
+                          // set the expected length before bytes get synced,
+                          // but after the item was selected, which happens
+                          // to be when the text to insert gets read
+                          currentSyncBytesLineNumber = position.lineNumber;
+                          currentSyncBytesLineLength = k.data.length;
+
+                          return line;
+                      }
+                    });
+                    return result.concat(suggestion);
                 } else if (k.type === "ok") {
                     isValidCompletion = true;
                 } else if (k.type === "error") {
@@ -432,8 +445,8 @@ require(['vs/editor/editor.main'], function () {
     var isModelBytesSync = false;
     var isModelEditorSync = false;
 
-    var previousBytesLineCount = 0;
-    var previousInstructionLineCount = 0;
+    var currentSyncBytesLineNumber = INVALID_LINE;
+    var currentSyncBytesLineLength = 0;
 
     var instanceEditor = monaco.editor.create(
         document.getElementById('editor'), {
@@ -480,13 +493,10 @@ require(['vs/editor/editor.main'], function () {
             monaco.editor.setModelMarkers(instanceEditor.getModel(), OWNER_EDITOR, []);
         }
 
-        if (previousInstructionLineCount != modelEditor.getLineCount()) {
-            previousInstructionLineCount = modelEditor.getLineCount();
-            if (isModelEditorSync) {
-                isModelEditorSync = false;
-            } else {
-                syncBytes();
-            }
+        if (isModelEditorSync) {
+            isModelEditorSync = false;
+        } else {
+            syncBytes();
         }
     });
 
@@ -499,13 +509,10 @@ require(['vs/editor/editor.main'], function () {
             monaco.editor.setModelMarkers(instanceBytes.getModel(), OWNER_BYTES, []);
         }
 
-        if (previousBytesLineCount != modelBytes.getLineCount()) {
-            previousBytesLineCount = modelBytes.getLineCount();
-            if (isModelBytesSync) {
-                isModelBytesSync = false;
-            } else {
-                syncAssemblyEditor();
-            }
+        if (isModelBytesSync) {
+            isModelBytesSync = false;
+        } else {
+            syncAssemblyEditor();
         }
     });
 

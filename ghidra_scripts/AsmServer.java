@@ -250,6 +250,7 @@ public class AsmServer extends GhidraScript {
 						// we need to compute the next instruction's address, picking one of the
 						// possible encodings (which might not match what the user previously picked).
 						long candidateDiff = Math.abs(co.getDisplay().length() - line.previousLength);
+						//printerr(String.format("candidateInstruction @ %s cand=(%s-%s)=%s last=%s", nextAddress, co.getDisplay().length(), line.previousLength, candidateDiff, lastDiff));
 						if (candidateDiff < lastDiff) {
 							lastDiff = candidateDiff;
 							candidateInstruction = (AssemblyInstruction) co;
