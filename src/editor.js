@@ -99,18 +99,26 @@ require(['vs/editor/editor.main'], function () {
 
     const currentByteOffset = function(editorLineNumber, startLineNumber, offset) {
         const modelBytes = instanceBytes.getModel();
+        const modelEditor = instanceEditor.getModel();
         for (var i = startLineNumber; i < modelBytes.getLineCount() + 1; i++) {
             if (i === editorLineNumber) {
                 break;
             }
             let line = modelBytes.getLineContent(i).trimStart();
             if (!line) {
+                const disassembledLine = modelEditor.getLineContent(i).trim();
+                if (isDirective(disassembledLine)) {
+                    let candidateOrigin = parseOriginDirective(disassembledLine);
+                    if (candidateOrigin) {
+                        offset = parseInt(candidateOrigin[1], 16);
+                    }
+                }
                 continue;
             }
             if (isValidHexString(line)) {
                 line.replace(/\s/g, '').match(/.{1,2}/g).map((_) => { offset++; });
             } else {
-                console.error(`Invalid hex string @ ${line}`);
+                console.error(`Invalid hex string @ ${i} = '${line}'`);
             }
         }
         return [i, offset];
@@ -278,7 +286,10 @@ require(['vs/editor/editor.main'], function () {
 
         // After range: Matching lines are offset, e.g. if new lines were added, then cached lines previously had smaller line numbers, or vice-versa.
         for (let i = cacheOffsetLine; i < modelEditor.getLineCount() + 1; i++) {
-            if ((i - cacheOffset) in cache) {
+            // Only cache if line not empty: this is a hack to not duplicate 
+            // the previous line when inserting a newline at the end of the 
+            // text content.
+            if ((i - cacheOffset) in cache && !!modelEditor.getLineContent(i).trim()) {
                 newCache[i] = cache[i - cacheOffset];
             }
         }
@@ -288,6 +299,7 @@ require(['vs/editor/editor.main'], function () {
             cacheOffset = 0;
             cacheOffsetLine = MAX;
         } else {
+            //console.log(cacheOffset, cacheOffsetLine, cache, newCache);
             cache = newCache;
         }
     };
@@ -441,7 +453,7 @@ require(['vs/editor/editor.main'], function () {
                 } else if (k.type === "bytes") {
                     isValidCompletion = true;
                     let suggestion = {
-                        label: `${line} => ${k.data}`,
+                        label: `${line} → ${k.data}`,
                         kind: monaco.languages.CompletionItemKind.Property
                     };
                     Object.defineProperty(suggestion, 'insertText', {
@@ -648,15 +660,18 @@ require(['vs/editor/editor.main'], function () {
         const modelEditor = instanceEditor.getModel();
         for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
             const line = modelBytes.getLineContent(i);
-            if (!line || (line == UNKNOWN_BYTES)) {
+            if (line == UNKNOWN_BYTES) {
                 continue;
             }
             const disassembledLine = modelEditor.getLineContent(i).trim();
-            if (isDirective(disassembledLine)) {
+            if (!disassembledLine) {
+                continue;
+            } else if (isDirective(disassembledLine)) {
                 let candidateOrigin = parseOriginDirective(disassembledLine);
                 if (candidateOrigin) {
                     data.push(`\n    f.seek(${candidateOrigin[1]})\n\n`);
                 }
+                continue;
             } else if (disassembledLine.length > 0) {
                 data.push(`    # ${disassembledLine}\n`);
             }
@@ -674,8 +689,6 @@ require(['vs/editor/editor.main'], function () {
 import sys
 
 with open(sys.argv[1], 'r+b') as f:
-    f.seek(${baseOffset})
-
     b = b''
 ${Array.prototype.join.call(data, '')}
     f.write(b)

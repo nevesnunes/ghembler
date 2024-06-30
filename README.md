@@ -6,9 +6,11 @@ Example using [Toshiba TLCS-900/H](https://github.com/nevesnunes/ghidra-tlcs900h
 
 ![](./img/1.png)
 
-Example using x86-64 with directives:
+Example using x86-64 (jump to relative vs absolute address):
 
 ![](./img/2.png)
+
+![](./img/3.png)
 
 `Save patch` generates a Python script that applies instructions at the given base offset to an input file:
 
@@ -18,15 +20,16 @@ Example using x86-64 with directives:
 import sys
 
 with open(sys.argv[1], 'r+b') as f:
-    f.seek(0x8000)
-
     b = b''
-    # adc (+0x1234),A
-    b += b'\xc1\x34\x12\x99'
-    # swi 7
-    b += b'\xff'
-    # extz XBC
-    b += b'\xe7\xe4\x12'
+    # MOV AX,123
+    b += b'\x66\xc7\xc0\x7b\x00'
+    # NOP
+    b += b'\x66\x48\x90'
+
+    f.seek(0x8)
+
+    # JMP 0x5
+    b += b'\x48\xe9\xf7\xdf\xff\xff'  # relative to base offset 0x2000
 
     f.write(b)
 ```

@@ -178,7 +178,7 @@ public class AsmServer extends GhidraScript {
 			// println(new String(data));
 
 			List<AssemblyLine> lines = parseAssemblyLines(data);
-			boolean isBatch = lines.size() > 1;
+			boolean isBatch = lines.size() > 0 && lines.get(0).previousLength() > 0;
 
 			he.getResponseHeaders().put("Access-Control-Allow-Origin", Collections.singletonList("*"));
 			he.sendResponseHeaders(HttpURLConnection.HTTP_OK, 0);
@@ -253,6 +253,7 @@ public class AsmServer extends GhidraScript {
 						// we need to compute the next instruction's address, picking one of the
 						// possible encodings (which might not match what the user previously picked).
 						long candidateDiff = Math.abs(co.getDisplay().length() - line.previousLength);
+						println(String.format("%s: %s-%s=%s last=%s\n", co.getDisplay().replaceAll("\\s+", ""), co.getDisplay().length(), line.previousLength, candidateDiff, lastDiff));
 						if (candidateDiff < lastDiff) {
 							lastDiff = candidateDiff;
 							candidateInstruction = (AssemblyInstruction) co;
@@ -292,6 +293,7 @@ public class AsmServer extends GhidraScript {
 					}
 				}
 			} else if (line.type().equals(TYPE_DIRECTIVE_ORIGIN)) {
+				Address baseAddress = line.address();
 				Address originAddress = toAddr(line.data());
 				if (originAddress == null) {
 					JsonObject json = new JsonObject();
@@ -299,7 +301,7 @@ public class AsmServer extends GhidraScript {
 					json.addProperty(ASSEMBLER_COMPLETION_DATA, String.format("Invalid origin '%s'", line.data()));
 					gson.toJson(json, jsonWriter);
 				} else {
-					nextAddress = originAddress;
+					nextAddress = toAddr(baseAddress.getUnsignedOffset() + originAddress.getUnsignedOffset());
 
 					JsonObject json = new JsonObject();
 					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
@@ -370,6 +372,8 @@ public class AsmServer extends GhidraScript {
 				for (final AssemblyCompletion co : computeCompletions(line.address(), line.data())) {
 					JsonObject json = new JsonObject();
 					if (co instanceof AssemblyInstruction) {
+						// Add all seen instructions, since stream mode is used to show
+						// suggestion during auto-complete.
 						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "bytes");
 						json.addProperty(ASSEMBLER_COMPLETION_DATA, co.getDisplay());
 					} else if (co instanceof AssemblySuggestion) {
