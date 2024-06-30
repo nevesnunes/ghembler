@@ -672,7 +672,9 @@ require(['vs/editor/editor.main'], function () {
             } else if (isDirective(disassembledLine)) {
                 let candidateOrigin = parseOriginDirective(disassembledLine);
                 if (candidateOrigin) {
-                    data.push(`\n    f.seek(${candidateOrigin[1]})\n\n`);
+                    data.push(`\n    f.write(b)\n`);
+                    data.push(`\n    f.seek(${candidateOrigin[1]})\n`);
+                    data.push(`\n    b = b''\n`);
                 }
                 continue;
             } else if (disassembledLine.length > 0) {

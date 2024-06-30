@@ -26,8 +26,11 @@ with open(sys.argv[1], 'r+b') as f:
     # NOP
     b += b'\x66\x48\x90'
 
+    f.write(b)
+
     f.seek(0x8)
 
+    b = b''
     # JMP 0x5
     b += b'\x48\xe9\xf7\xdf\xff\xff'  # relative to base offset 0x2000
 
