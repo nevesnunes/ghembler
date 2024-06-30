@@ -175,11 +175,10 @@ require(['vs/editor/editor.main'], function () {
                         previousLength = currentSyncBytesLineLength;
                         currentSyncBytesLineNumber = INVALID_LINE;
                         currentSyncBytesLineLength = 0;
-                    } else if (modelBytes.getLineCount() >= i
-                            && cache[i] == modelEditor.getLineContent(i)) {
-                        if (i >= cacheOffsetLine) {
+                    } else if (cache[i] == modelEditor.getLineContent(i)) {
+                        if (i >= cacheOffsetLine && (modelBytes.getLineCount() >= i - cacheOffset)) {
                             previousLength = modelBytes.getLineContent(i - cacheOffset).length;
-                        } else {
+                        } else if (modelBytes.getLineCount() >= i) {
                             previousLength = modelBytes.getLineContent(i).length;
                         }
                     }
@@ -258,6 +257,7 @@ require(['vs/editor/editor.main'], function () {
         const linesBefore = change.range.endLineNumber - change.range.startLineNumber;
         const linesAfter = (change.text.match(/\n/g) || []).length;
         cacheOffset = linesAfter - linesBefore;
+        cacheOffsetLine = MAX;
 
         let newCache = {};
 
@@ -277,6 +277,9 @@ require(['vs/editor/editor.main'], function () {
         for (let i = change.range.startLineNumber; i < change.range.endLineNumber + 1; i++) {
             if (cache[i] == newRangeLines[rangeIdx]) {
                 newCache[i] = cache[i];
+                // If we don't see any mismatch in range, then this will
+                // be the next line after the range.
+                cacheOffsetLine = i + 1;
             } else {
                 cacheOffsetLine = i;
                 break;
@@ -286,8 +289,8 @@ require(['vs/editor/editor.main'], function () {
 
         // After range: Matching lines are offset, e.g. if new lines were added, then cached lines previously had smaller line numbers, or vice-versa.
         for (let i = cacheOffsetLine; i < modelEditor.getLineCount() + 1; i++) {
-            // Only cache if line not empty: this is a hack to not duplicate 
-            // the previous line when inserting a newline at the end of the 
+            // Only cache if line not empty: this is a hack to not duplicate
+            // the previous line when inserting a newline at the end of the
             // text content.
             if ((i - cacheOffset) in cache && !!modelEditor.getLineContent(i).trim()) {
                 newCache[i] = cache[i - cacheOffset];
