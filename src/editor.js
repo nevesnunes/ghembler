@@ -19,6 +19,17 @@ require(['vs/editor/editor.main'], function () {
     // Helper methods
     //
 
+    const hasLabel = (line) => {
+        for (const tok of line.split(/[^\w]/)) {
+            for (const lbl of knownLabels) {
+                if (tok.includes(lbl)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     const isDirective = (line) => {
         return /^\s*\.[0-9a-zA-Z]+:/.test(line);
     }
@@ -155,6 +166,7 @@ require(['vs/editor/editor.main'], function () {
                     }
                     let candidateLabel = parseLabelDirective(line);
                     if (candidateLabel) {
+                        knownLabels.add(candidateLabel[1]);
                         requestLines.push({
                             "address": baseOffset,
                             "data": candidateLabel[1],
@@ -433,6 +445,13 @@ require(['vs/editor/editor.main'], function () {
                         // Empty on both editors
                         cacheAssemblyEditor.push('');
                     }
+                } else if (i in cacheAssembly 
+                        && cacheAssembly[i].split(/[^\w]/)[0] == disassemblySet[disassemblyIndex].split(/[^\w]/)[0]
+                        && hasLabel(cacheAssembly[i]) 
+                        && !hasLabel(disassemblySet[disassemblyIndex])) {
+                    // Preserve instructions with user-defined labels
+                    // if the mnemonic is the same after edits
+                    cacheAssemblyEditor.push(cacheAssembly[i]);
                 } else if (disassemblyIndex < disassemblySet.length) {
                     let disassembly = disassemblySet[disassemblyIndex];
                     cacheAssemblyEditor.push(disassembly);
@@ -643,6 +662,7 @@ require(['vs/editor/editor.main'], function () {
     var cacheBytes = {};
     var cacheOffset = 0;
     var cacheOffsetLine = MAX;
+    var knownLabels = new Set();
 
     var instanceEditor = monaco.editor.create(
         document.getElementById('editor'), {
