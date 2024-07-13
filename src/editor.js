@@ -127,7 +127,7 @@ require(['vs/editor/editor.main'], function () {
     const syncBytes = function() {
         (async () => {
             let baseOffset = parseBaseOffset();
-            let cacheBytes = [];
+            let newInstanceBytes = [];
             let emptyLines = new Set();
             let requestLines = [];
             const modelBytes = instanceBytes.getModel();
@@ -175,7 +175,7 @@ require(['vs/editor/editor.main'], function () {
                         previousLength = currentSyncBytesLineLength;
                         currentSyncBytesLineNumber = INVALID_LINE;
                         currentSyncBytesLineLength = 0;
-                    } else if (cache[i] == modelEditor.getLineContent(i)) {
+                    } else if (cacheAssembly[i] == modelEditor.getLineContent(i)) {
                         if (i >= cacheOffsetLine && (modelBytes.getLineCount() >= i - cacheOffset)) {
                             previousLength = modelBytes.getLineContent(i - cacheOffset).length;
                         } else if (modelBytes.getLineCount() >= i) {
@@ -196,7 +196,7 @@ require(['vs/editor/editor.main'], function () {
             let completionIndex = 0;
             for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
                 if (emptyLines.has(i)) {
-                    cacheBytes.push('');
+                    newInstanceBytes.push('');
                 } else if (completionIndex < completionSet.length) {
                     let completions = completionSet[completionIndex];
                     let hexBytes = UNKNOWN_BYTES;
@@ -220,7 +220,7 @@ require(['vs/editor/editor.main'], function () {
                             });
                         }
                     });
-                    cacheBytes.push(hexBytes);
+                    newInstanceBytes.push(hexBytes);
 
                     completionIndex++;
                 } else {
@@ -238,20 +238,96 @@ require(['vs/editor/editor.main'], function () {
             monaco.editor.setModelMarkers(instanceEditor.getModel(), OWNER_EDITOR, markers);
 
             isModelBytesSync = true;
-            instanceBytes.setValue(cacheBytes.join('\n'));
+            instanceBytes.setValue(newInstanceBytes.join('\n'));
 
             updateCache();
         })();
     };
 
     const updateCache = function() {
+        const modelBytes = instanceBytes.getModel();
+        for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
+            cacheBytes[i] = modelBytes.getLineContent(i);
+        }
         const modelEditor = instanceEditor.getModel();
         for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
-            cache[i] = modelEditor.getLineContent(i);
+            cacheAssembly[i] = modelEditor.getLineContent(i);
         }
     };
 
-    const updateCacheOnChanges = function(context, modelEditor) {
+    const updateCacheOnBytesChanges = function(context, modelBytes) {
+        const modelEditor = instanceEditor.getModel();
+
+        // FIXME: How to handle more than one change?
+        const change = context.changes[0];
+        const linesBefore = change.range.endLineNumber - change.range.startLineNumber;
+        const linesAfter = (change.text.match(/\n/g) || []).length;
+        cacheOffset = linesAfter - linesBefore;
+
+        let newCacheBytes = {};
+        let newCacheAssembly = {};
+
+        // Before range: Still the same lines.
+        for (let i = 1; i < change.range.startLineNumber; i++) {
+            if (i in cacheBytes && !!cacheBytes[i]) {
+                newCacheBytes[i] = cacheBytes[i];
+            } else {
+                newCacheBytes[i] = modelBytes.getLineContent(i);
+            }
+            if (i <= modelEditor.getLineCount()) {
+                newCacheAssembly[i] = modelEditor.getLineContent(i);
+            }
+        }
+
+        // In range: We compare lines, but also account for existing chars in the start and end lines, which are not part of the changed range.
+        let newRangeLines = change.text.split('\n');
+        newRangeLines[0] = newRangeLines[0] + modelBytes.getLineContent(change.range.startLineNumber).substr(0, change.range.startColumn);
+        let newLastIdx = newRangeLines.length - 1;
+        if (newLastIdx > 0) {
+            newRangeLines[newLastIdx] = newRangeLines[newLastIdx] + modelBytes.getLineContent(change.range.endLineNumber).substr(change.range.endColumn, MAX);
+        }
+        let rangeIdx = 0;
+        let lastInRangeLineNumber = change.range.endLineNumber + cacheOffset + 1;
+        cacheOffsetLine = change.range.startLineNumber;
+        for (let i = change.range.startLineNumber; i < lastInRangeLineNumber; i++) {
+            cacheOffsetLine = i + 1;
+            if (i in cacheBytes) {
+                candidateBytes = cacheBytes[i];
+            }
+            if (candidateBytes == newRangeLines[rangeIdx]) {
+                newCacheBytes[i] = candidateBytes;
+                if (!!candidateBytes) {
+                    if (i in cacheAssembly) {
+                    newCacheAssembly[i] = cacheAssembly[i];
+                    } else {
+                        newCacheAssembly[i] = modelEditor.getLineContent(i);
+                    }
+                }
+            } else {
+                break;
+            }
+            rangeIdx += 1;
+        }
+
+        // After range: Matching lines are offset, e.g. if new lines were added, then cached lines previously had smaller line numbers, or vice-versa.
+        for (let i = cacheOffsetLine; i < modelBytes.getLineCount() + 1; i++) {
+            if ((i - cacheOffset) in cacheBytes) {
+                newCacheBytes[i] = cacheBytes[i - cacheOffset];
+            }
+
+            if ((i - cacheOffset) > 0 && (i - cacheOffset) <= modelEditor.getLineCount()) {
+                newCacheAssembly[i] = modelEditor.getLineContent(i - cacheOffset);
+            }
+        }
+
+        //console.log(cacheOffset, cacheOffsetLine, "byt", cacheBytes, newCacheBytes, "asm", cacheAssembly, newCacheAssembly);
+        cacheBytes = newCacheBytes;
+        cacheAssembly = newCacheAssembly;
+    };
+
+    const updateCacheOnAssemblyChanges = function(context, model) {
+        const modelBytes = instanceBytes.getModel();
+
         // FIXME: How to handle more than one change?
         const change = context.changes[0];
         const linesBefore = change.range.endLineNumber - change.range.startLineNumber;
@@ -259,24 +335,26 @@ require(['vs/editor/editor.main'], function () {
         cacheOffset = linesAfter - linesBefore;
         cacheOffsetLine = MAX;
 
-        let newCache = {};
+        let newCacheAssembly = {};
 
         // Before range: Still the same lines.
         for (let i = 1; i < change.range.startLineNumber; i++) {
-            newCache[i] = cache[i];
+            if (i in cacheAssembly) {
+                newCacheAssembly[i] = cacheAssembly[i];
+            }
         }
 
         // In range: We compare lines, but also account for existing chars in the start and end lines, which are not part of the changed range.
         let newRangeLines = change.text.split('\n');
-        newRangeLines[0] = newRangeLines[0] + modelEditor.getLineContent(change.range.startLineNumber).substr(0, change.range.startColumn);
+        newRangeLines[0] = newRangeLines[0] + model.getLineContent(change.range.startLineNumber).substr(0, change.range.startColumn);
         let newLastIdx = newRangeLines.length - 1;
         if (newLastIdx > 0) {
-            newRangeLines[newLastIdx] = newRangeLines[newLastIdx] + modelEditor.getLineContent(change.range.endLineNumber).substr(change.range.endColumn, MAX);
+            newRangeLines[newLastIdx] = newRangeLines[newLastIdx] + model.getLineContent(change.range.endLineNumber).substr(change.range.endColumn, MAX);
         }
         let rangeIdx = 0;
         for (let i = change.range.startLineNumber; i < change.range.endLineNumber + 1; i++) {
-            if (cache[i] == newRangeLines[rangeIdx]) {
-                newCache[i] = cache[i];
+            if (cacheAssembly[i] == newRangeLines[rangeIdx]) {
+                newCacheAssembly[i] = cacheAssembly[i];
                 // If we don't see any mismatch in range, then this will
                 // be the next line after the range.
                 cacheOffsetLine = i + 1;
@@ -288,22 +366,19 @@ require(['vs/editor/editor.main'], function () {
         }
 
         // After range: Matching lines are offset, e.g. if new lines were added, then cached lines previously had smaller line numbers, or vice-versa.
-        for (let i = cacheOffsetLine; i < modelEditor.getLineCount() + 1; i++) {
-            // Only cache if line not empty: this is a hack to not duplicate
-            // the previous line when inserting a newline at the end of the
-            // text content.
-            if ((i - cacheOffset) in cache && !!modelEditor.getLineContent(i).trim()) {
-                newCache[i] = cache[i - cacheOffset];
+        for (let i = cacheOffsetLine; i < model.getLineCount() + 1; i++) {
+            if ((i - cacheOffset) in cacheAssembly) {
+                newCacheAssembly[i] = cacheAssembly[i - cacheOffset];
             }
         }
 
         // Nothing matched, might be a paste on an empty editor?
-        if (Object.keys(newCache).length == 0) {
+        if (Object.keys(newCacheAssembly).length == 0) {
             cacheOffset = 0;
             cacheOffsetLine = MAX;
         } else {
-            //console.log(cacheOffset, cacheOffsetLine, cache, newCache);
-            cache = newCache;
+            //console.log(cacheOffset, cacheOffsetLine, cacheAssembly, newCacheAssembly);
+            cacheAssembly = newCacheAssembly;
         }
     };
 
@@ -313,7 +388,7 @@ require(['vs/editor/editor.main'], function () {
 
         // If the target editor has less lines than the target line to edit,
         // we need to prepend as many newlines as needed to match both editors
-        let modelBytes = instanceBytes.getModel();
+        const modelBytes = instanceBytes.getModel();
         let linesToAdd = lineNumber - modelBytes.getLineCount();
         while (linesToAdd > 0) {
             text = '\n' + text;
@@ -351,7 +426,13 @@ require(['vs/editor/editor.main'], function () {
             let disassemblyIndex = 0;
             for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
                 if (emptyLines.has(i)) {
-                    cacheAssemblyEditor.push('');
+                    if (i in cacheAssembly) {
+                        // Preserve directives
+                        cacheAssemblyEditor.push(cacheAssembly[i]);
+                    } else {
+                        // Empty on both editors
+                        cacheAssemblyEditor.push('');
+                    }
                 } else if (disassemblyIndex < disassemblySet.length) {
                     let disassembly = disassemblySet[disassemblyIndex];
                     cacheAssemblyEditor.push(disassembly);
@@ -558,7 +639,8 @@ require(['vs/editor/editor.main'], function () {
     var currentSyncBytesLineNumber = INVALID_LINE;
     var currentSyncBytesLineLength = 0;
 
-    var cache = {};
+    var cacheAssembly = {};
+    var cacheBytes = {};
     var cacheOffset = 0;
     var cacheOffsetLine = MAX;
 
@@ -610,12 +692,12 @@ require(['vs/editor/editor.main'], function () {
         if (isModelEditorSync) {
             isModelEditorSync = false;
         } else {
-            updateCacheOnChanges(context, modelEditor);
+            updateCacheOnAssemblyChanges(context, modelEditor);
             syncBytes();
         }
     });
 
-    instanceBytes.onDidChangeModelContent((_) => {
+    instanceBytes.onDidChangeModelContent((context) => {
         const modelBytes = instanceBytes.getModel();
         const previousMarkers = monaco.editor.getModelMarkers();
         if (previousMarkers.length > 0
@@ -627,6 +709,7 @@ require(['vs/editor/editor.main'], function () {
         if (isModelBytesSync) {
             isModelBytesSync = false;
         } else {
+            updateCacheOnBytesChanges(context, modelBytes);
             syncAssemblyEditor();
         }
     });
