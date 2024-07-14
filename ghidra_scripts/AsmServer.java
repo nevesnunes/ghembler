@@ -77,6 +77,7 @@ public class AsmServer extends GhidraScript {
 	private static final String DISASSEMBLER_TYPE = "type";
 	private static final String DISASSEMBLER_DATA = "data";
 	private static final String DISASSEMBLER_PREVIOUS_LENGTH = "previousLength";
+	private static final String DISASSEMBLER_PREVIOUS_DATA = "previousData";
 
 	private static final String TYPE_DIRECTIVE_FILL = "fill";
 	private static final String TYPE_DIRECTIVE_LABEL = "label";
@@ -86,7 +87,7 @@ public class AsmServer extends GhidraScript {
 	private static final String UNKNOWN_BYTES = "??";
 
 	// Either assembled hex bytes or disassembled display text
-	private record AssemblyLine(Address address, String type, String data, long previousLength) {
+	private record AssemblyLine(Address address, String type, String data, long previousLength, String previousData) {
 	}
 
 	@Override
@@ -133,6 +134,7 @@ public class AsmServer extends GhidraScript {
 			String type = TYPE_INSTRUCTION;
 			String display = "";
 			long previousLength = 0;
+			String previousData = "";
 			while (jsonReader.hasNext()) {
 				String name = jsonReader.nextName();
 				if (name.equals(DISASSEMBLER_ADDRESS)) {
@@ -143,12 +145,14 @@ public class AsmServer extends GhidraScript {
 					display = jsonReader.nextString();
 				} else if (name.equals(DISASSEMBLER_PREVIOUS_LENGTH)) {
 					previousLength = jsonReader.nextLong();
+				} else if (name.equals(DISASSEMBLER_PREVIOUS_DATA)) {
+					previousData = jsonReader.nextString();
 				} else {
 					throw new RuntimeException(String.format("Unknown disassembly field with name='%s'", name));
 				}
 			}
 			Address address = toAddr(addressOffset);
-			return new AssemblyLine(address, type, display, previousLength);
+			return new AssemblyLine(address, type, display, previousLength, previousData);
 		} finally {
 			jsonReader.endObject();
 		}
@@ -248,6 +252,12 @@ public class AsmServer extends GhidraScript {
 				long lastDiff = 9999;
 				for (final AssemblyCompletion co : computeCompletions(nextAddress, line.data())) {
 					if (co instanceof AssemblyInstruction) {
+						// Same instruction was assembled
+						if (line.previousData.replaceAll("\\s+","").equalsIgnoreCase(co.getDisplay().replaceAll("\\s+",""))) {
+							candidateInstruction = (AssemblyInstruction) co;
+							break;
+						}
+
 						// Addresses sent in batch request are assumed to always be the base offset,
 						// since the client doesn't know about previous instruction lengths, so
 						// we need to compute the next instruction's address, picking one of the

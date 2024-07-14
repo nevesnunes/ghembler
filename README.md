@@ -91,6 +91,14 @@ curl -X POST -H "Content-Type: text/plain" --data "jp NZ/NE,XWA+1" http://localh
 # ]
 ```
 
+## Testing
+
+Run backend, then:
+
+```sh
+npx playwright test --debug --ui --project=chromium
+```
+
 ## Related work
 
 - [GitHub \- ret2jazzy/disasm\.pro: A realtime assembler/disassembler \(formerly known as disasm\.ninja\)](https://github.com/ret2jazzy/disasm.pro)

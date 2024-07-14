@@ -109,8 +109,8 @@ require(['vs/editor/editor.main'], function () {
     };
 
     const currentByteOffset = function(editorLineNumber, startLineNumber, offset) {
-        const modelBytes = instanceBytes.getModel();
-        const modelEditor = instanceEditor.getModel();
+        const modelBytes = window.instanceBytes.getModel();
+        const modelEditor = window.instanceEditor.getModel();
         for (var i = startLineNumber; i < modelBytes.getLineCount() + 1; i++) {
             if (i === editorLineNumber) {
                 break;
@@ -141,8 +141,8 @@ require(['vs/editor/editor.main'], function () {
             let newInstanceBytes = [];
             let emptyLines = new Set();
             let requestLines = [];
-            const modelBytes = instanceBytes.getModel();
-            const modelEditor = instanceEditor.getModel();
+            const modelBytes = window.instanceBytes.getModel();
+            const modelEditor = window.instanceEditor.getModel();
             for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
                 let line = modelEditor.getLineContent(i).trim();
                 if (!line) {
@@ -183,21 +183,26 @@ require(['vs/editor/editor.main'], function () {
                     }
                 } else {
                     let previousLength = 0;
+                    let previousData = '';
                     if (i == currentSyncBytesLineNumber) {
                         previousLength = currentSyncBytesLineLength;
+                        previousData = modelBytes.getLineContent(currentSyncBytesLineNumber);
                         currentSyncBytesLineNumber = INVALID_LINE;
                         currentSyncBytesLineLength = 0;
                     } else if (cacheAssembly[i] == modelEditor.getLineContent(i)) {
                         if (i >= cacheOffsetLine && (modelBytes.getLineCount() >= i - cacheOffset)) {
-                            previousLength = modelBytes.getLineContent(i - cacheOffset).length;
+                            previousData = modelBytes.getLineContent(i - cacheOffset);
+                            previousLength = previousData.length;
                         } else if (modelBytes.getLineCount() >= i) {
-                            previousLength = modelBytes.getLineContent(i).length;
+                            previousData = modelBytes.getLineContent(i);
+                            previousLength = previousData.length;
                         }
                     }
                     requestLines.push({
                         "address": baseOffset,
                         "data": line,
-                        "previousLength": previousLength
+                        "previousLength": previousLength,
+                        "previousData": previousData,
                     });
                 }
             }
@@ -247,28 +252,28 @@ require(['vs/editor/editor.main'], function () {
                 }
             }
 
-            monaco.editor.setModelMarkers(instanceEditor.getModel(), OWNER_EDITOR, markers);
+            monaco.editor.setModelMarkers(window.instanceEditor.getModel(), OWNER_EDITOR, markers);
 
             isModelBytesSync = true;
-            instanceBytes.setValue(newInstanceBytes.join('\n'));
+            window.instanceBytes.setValue(newInstanceBytes.join('\n'));
 
             updateCache();
         })();
     };
 
     const updateCache = function() {
-        const modelBytes = instanceBytes.getModel();
+        const modelBytes = window.instanceBytes.getModel();
         for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
             cacheBytes[i] = modelBytes.getLineContent(i);
         }
-        const modelEditor = instanceEditor.getModel();
+        const modelEditor = window.instanceEditor.getModel();
         for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
             cacheAssembly[i] = modelEditor.getLineContent(i);
         }
     };
 
     const updateCacheOnBytesChanges = function(context, modelBytes) {
-        const modelEditor = instanceEditor.getModel();
+        const modelEditor = window.instanceEditor.getModel();
 
         // FIXME: How to handle more than one change?
         const change = context.changes[0];
@@ -303,12 +308,14 @@ require(['vs/editor/editor.main'], function () {
         cacheOffsetLine = change.range.startLineNumber;
         for (let i = change.range.startLineNumber; i < lastInRangeLineNumber; i++) {
             cacheOffsetLine = i + 1;
+
+            let candidateBytes = undefined;
             if (i in cacheBytes) {
                 candidateBytes = cacheBytes[i];
             }
             if (candidateBytes == newRangeLines[rangeIdx]) {
                 newCacheBytes[i] = candidateBytes;
-                if (!!candidateBytes) {
+                if (candidateBytes) {
                     if (i in cacheAssembly) {
                     newCacheAssembly[i] = cacheAssembly[i];
                     } else {
@@ -338,7 +345,7 @@ require(['vs/editor/editor.main'], function () {
     };
 
     const updateCacheOnAssemblyChanges = function(context, model) {
-        const modelBytes = instanceBytes.getModel();
+        const modelBytes = window.instanceBytes.getModel();
 
         // FIXME: How to handle more than one change?
         const change = context.changes[0];
@@ -400,7 +407,7 @@ require(['vs/editor/editor.main'], function () {
 
         // If the target editor has less lines than the target line to edit,
         // we need to prepend as many newlines as needed to match both editors
-        const modelBytes = instanceBytes.getModel();
+        const modelBytes = window.instanceBytes.getModel();
         let linesToAdd = lineNumber - modelBytes.getLineCount();
         while (linesToAdd > 0) {
             text = '\n' + text;
@@ -409,7 +416,7 @@ require(['vs/editor/editor.main'], function () {
 
         isModelBytesSync = true;
         const editOperation = {identifier: id, range: range, text: text, forceMoveMarkers: true};
-        instanceBytes.executeEdits("custom-code", [ editOperation ]);
+        window.instanceBytes.executeEdits("custom-code", [ editOperation ]);
     };
 
     const syncAssemblyEditor = function() {
@@ -418,8 +425,8 @@ require(['vs/editor/editor.main'], function () {
             let cacheAssemblyEditor = [];
             let emptyLines = new Set();
             let requestLines = [];
-            const modelBytes = instanceBytes.getModel();
-            const modelEditor = instanceEditor.getModel();
+            const modelBytes = window.instanceBytes.getModel();
+            const modelEditor = window.instanceEditor.getModel();
             for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
                 let line = modelBytes.getLineContent(i).trim();
                 if (!line) {
@@ -469,10 +476,10 @@ require(['vs/editor/editor.main'], function () {
                 }
             }
 
-            monaco.editor.setModelMarkers(instanceEditor.getModel(), OWNER_EDITOR, markers);
+            monaco.editor.setModelMarkers(window.instanceEditor.getModel(), OWNER_EDITOR, markers);
 
             isModelEditorSync = true;
-            instanceEditor.setValue(cacheAssemblyEditor.join('\n'));
+            window.instanceEditor.setValue(cacheAssemblyEditor.join('\n'));
         })();
     };
 
@@ -482,7 +489,7 @@ require(['vs/editor/editor.main'], function () {
 
         // If the target editor has less lines than the target line to edit,
         // we need to prepend as many newlines as needed to match both editors
-        let modelEditor = instanceEditor.getModel();
+        let modelEditor = window.instanceEditor.getModel();
         let linesToAdd = lineNumber - modelEditor.getLineCount();
         while (linesToAdd > 0) {
             text = '\n' + text;
@@ -491,7 +498,7 @@ require(['vs/editor/editor.main'], function () {
 
         isModelEditorSync = true;
         const editOperation = {identifier: id, range: range, text: text, forceMoveMarkers: true};
-        instanceEditor.executeEdits("custom-code", [ editOperation ]);
+        window.instanceEditor.executeEdits("custom-code", [ editOperation ]);
     };
 
     //
@@ -594,7 +601,7 @@ require(['vs/editor/editor.main'], function () {
             if (isValidCompletion) {
                 markers = [];
             }
-            monaco.editor.setModelMarkers(instanceEditor.getModel(), OWNER_EDITOR, markers);
+            monaco.editor.setModelMarkers(window.instanceEditor.getModel(), OWNER_EDITOR, markers);
 
             return { suggestions: suggestions };
         }
@@ -627,7 +634,7 @@ require(['vs/editor/editor.main'], function () {
                 }
             }
 
-            markers = [];
+            let markers = [];
             if (!isValidCompletion) {
                 markers.push({
                     startLineNumber: position.lineNumber,
@@ -638,7 +645,7 @@ require(['vs/editor/editor.main'], function () {
                     severity: monaco.MarkerSeverity.Error,
                 });
             }
-            monaco.editor.setModelMarkers(instanceBytes.getModel(), OWNER_BYTES, markers);
+            monaco.editor.setModelMarkers(window.instanceBytes.getModel(), OWNER_BYTES, markers);
 
             return { suggestions: [] };
         }
@@ -664,7 +671,8 @@ require(['vs/editor/editor.main'], function () {
     var cacheOffsetLine = MAX;
     var knownLabels = new Set();
 
-    var instanceEditor = monaco.editor.create(
+    // Globally visible for tests
+    window.instanceEditor = monaco.editor.create(
         document.getElementById('editor'), {
             language: LANGUAGE_EDITOR,
             minimap: {
@@ -673,7 +681,7 @@ require(['vs/editor/editor.main'], function () {
             value: '',
         }
     );
-    var instanceBytes = monaco.editor.create(
+    window.instanceBytes = monaco.editor.create(
         document.getElementById('bytes'), {
             language: LANGUAGE_BYTES,
             minimap: {
@@ -687,26 +695,13 @@ require(['vs/editor/editor.main'], function () {
     // Handlers
     //
 
-    const commandSyncBytesId = instanceEditor.addCommand(
-        0,
-        function (_, ...args) {
-            const lineNumber = args[0].lineNumber;
-            const line = args[1];
-            const hexBytes = args[2];
-            //console.log(_, args);
-
-            syncBytesLine(lineNumber, hexBytes);
-        },
-        ""
-    );
-
-    instanceEditor.onDidChangeModelContent((context) => {
-        const modelEditor = instanceEditor.getModel();
+    window.instanceEditor.onDidChangeModelContent((context) => {
+        const modelEditor = window.instanceEditor.getModel();
         const previousMarkers = monaco.editor.getModelMarkers();
         if (previousMarkers.length > 0
             && previousMarkers[0].owner === OWNER_EDITOR
-            && instanceEditor.getPosition().lineNumber === previousMarkers[0].startLineNumber) {
-            monaco.editor.setModelMarkers(instanceEditor.getModel(), OWNER_EDITOR, []);
+            && window.instanceEditor.getPosition().lineNumber === previousMarkers[0].startLineNumber) {
+            monaco.editor.setModelMarkers(window.instanceEditor.getModel(), OWNER_EDITOR, []);
         }
 
         if (isModelEditorSync) {
@@ -717,13 +712,13 @@ require(['vs/editor/editor.main'], function () {
         }
     });
 
-    instanceBytes.onDidChangeModelContent((context) => {
-        const modelBytes = instanceBytes.getModel();
+    window.instanceBytes.onDidChangeModelContent((context) => {
+        const modelBytes = window.instanceBytes.getModel();
         const previousMarkers = monaco.editor.getModelMarkers();
         if (previousMarkers.length > 0
             && previousMarkers[0].owner === OWNER_BYTES
-            && instanceBytes.getPosition().lineNumber === previousMarkers[0].startLineNumber) {
-            monaco.editor.setModelMarkers(instanceBytes.getModel(), OWNER_BYTES, []);
+            && window.instanceBytes.getPosition().lineNumber === previousMarkers[0].startLineNumber) {
+            monaco.editor.setModelMarkers(window.instanceBytes.getModel(), OWNER_BYTES, []);
         }
 
         if (isModelBytesSync) {
@@ -742,7 +737,7 @@ require(['vs/editor/editor.main'], function () {
 
     document.querySelector('#save-bin-button').onclick = function() {
         let data = [];
-        const modelBytes = instanceBytes.getModel();
+        const modelBytes = window.instanceBytes.getModel();
         for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
             const line = modelBytes.getLineContent(i);
             if (!line || (line == UNKNOWN_BYTES)) {
@@ -762,8 +757,8 @@ require(['vs/editor/editor.main'], function () {
 
     document.querySelector('#save-patch-button').onclick = function() {
         let data = [];
-        const modelBytes = instanceBytes.getModel();
-        const modelEditor = instanceEditor.getModel();
+        const modelBytes = window.instanceBytes.getModel();
+        const modelEditor = window.instanceEditor.getModel();
         for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
             const line = modelBytes.getLineContent(i);
             if (line == UNKNOWN_BYTES) {
