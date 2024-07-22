@@ -1,6 +1,7 @@
 require.config({ paths: { vs: '../node_modules/monaco-editor/min/vs' } });
 
 require(['vs/editor/editor.main'], function () {
+
     //
     // Constants
     //
@@ -186,9 +187,10 @@ require(['vs/editor/editor.main'], function () {
                     let previousData = '';
                     if (i == currentSyncBytesLineNumber) {
                         previousLength = currentSyncBytesLineLength;
-                        previousData = modelBytes.getLineContent(currentSyncBytesLineNumber);
+                        previousData = currentSyncBytesLineData;
                         currentSyncBytesLineNumber = INVALID_LINE;
                         currentSyncBytesLineLength = 0;
+                        currentSyncBytesLineData = '';
                     } else if (cacheAssembly[i] == modelEditor.getLineContent(i)) {
                         if (i >= cacheOffsetLine && (modelBytes.getLineCount() >= i - cacheOffset)) {
                             previousData = modelBytes.getLineContent(i - cacheOffset);
@@ -575,6 +577,7 @@ require(['vs/editor/editor.main'], function () {
                           // to be when the text to insert gets read
                           currentSyncBytesLineNumber = position.lineNumber;
                           currentSyncBytesLineLength = k.data.length;
+                          currentSyncBytesLineData = k.data;
 
                           return line;
                       }
@@ -664,6 +667,7 @@ require(['vs/editor/editor.main'], function () {
 
     var currentSyncBytesLineNumber = INVALID_LINE;
     var currentSyncBytesLineLength = 0;
+    var currentSyncBytesLineData = '';
 
     var cacheAssembly = {};
     var cacheBytes = {};

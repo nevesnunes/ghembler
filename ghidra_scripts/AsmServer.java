@@ -182,7 +182,7 @@ public class AsmServer extends GhidraScript {
 			// println(new String(data));
 
 			List<AssemblyLine> lines = parseAssemblyLines(data);
-			boolean isBatch = lines.size() > 0 && lines.get(0).previousLength() > 0;
+			boolean isBatch = lines.size() > 1;
 
 			he.getResponseHeaders().put("Access-Control-Allow-Origin", Collections.singletonList("*"));
 			he.sendResponseHeaders(HttpURLConnection.HTTP_OK, 0);

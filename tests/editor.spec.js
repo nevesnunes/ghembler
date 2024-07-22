@@ -47,26 +47,18 @@ NOP
 .org:0xa
 JMP foo
 `
-        // FIXME: `JMP foo` should be `48 e9 f5 ff ff ff`
-        const bytesTextFIXME = `
-66 c7 c0 7b 00
-
-f2 48 90
-
-4f e9 fa ff ff ff
-`
         const bytesText = `
-66 c7 c0 7b 00
+66 b8 7b 00
 
-f2 48 90
+90
 
-48 e9 f5 ff ff ff
+eb f8
 `
 
         await triggerAssemblyEditorCommand('type', { text: assemblyText });
 
         expect(await page.locator(`#bytes .view-lines`), 'bytes fetched')
-            .toHaveText(bytesTextFIXME, { useInnerText: true });
+            .toHaveText(bytesText, { useInnerText: true });
 
         // Insert newline
         await editAssemblyEditor('5, 1, 5, 1', '\\n');
@@ -80,12 +72,12 @@ NOP
 JMP foo
 `
         const bytesTextAfterInsert = `
-66 c7 c0 7b 00
+66 b8 7b 00
 
-f2 48 90
+90
 
 
-48 e9 f5 ff ff ff
+eb f8
 `
 
         expect(await page.locator(`#editor .view-lines`), 'assembly on insert at line 5')
