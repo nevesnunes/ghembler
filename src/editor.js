@@ -15,10 +15,22 @@ require(['vs/editor/editor.main'], function () {
     const MAX = 99999;
     const INVALID_LINE = -1;
     const UNKNOWN_BYTES = '??';
+    const STORAGE_ASSEMBLY = 'asm';
 
     //
     // Helper methods
     //
+
+    const loadAssembly = () => {
+        let storedAssembly = localStorage.getItem(STORAGE_ASSEMBLY);
+        if (storedAssembly) {
+            window.instanceEditor.setValue(storedAssembly);
+        }
+    }
+
+    const storeAssembly = () => {
+        localStorage.setItem(STORAGE_ASSEMBLY, window.instanceEditor.getModel().getLinesContent().join('\n'));
+    }
 
     const hasLabel = (line) => {
         for (const tok of line.split(/[^\w]/)) {
@@ -139,7 +151,7 @@ require(['vs/editor/editor.main'], function () {
     const syncBytes = function() {
         (async () => {
             let baseOffset = parseBaseOffset();
-            let newInstanceBytes = [];
+            let newBytes = [];
             let emptyLines = new Set();
             let requestLines = [];
             const modelBytes = window.instanceBytes.getModel();
@@ -215,7 +227,7 @@ require(['vs/editor/editor.main'], function () {
             let completionIndex = 0;
             for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
                 if (emptyLines.has(i)) {
-                    newInstanceBytes.push('');
+                    newBytes.push('');
                 } else if (completionIndex < completionSet.length) {
                     let completions = completionSet[completionIndex];
                     let hexBytes = UNKNOWN_BYTES;
@@ -239,7 +251,7 @@ require(['vs/editor/editor.main'], function () {
                             });
                         }
                     });
-                    newInstanceBytes.push(hexBytes);
+                    newBytes.push(hexBytes);
 
                     completionIndex++;
                 } else {
@@ -257,7 +269,7 @@ require(['vs/editor/editor.main'], function () {
             monaco.editor.setModelMarkers(window.instanceEditor.getModel(), OWNER_EDITOR, markers);
 
             isModelBytesSync = true;
-            window.instanceBytes.setValue(newInstanceBytes.join('\n'));
+            window.instanceBytes.setValue(newBytes.join('\n'));
 
             updateCache();
         })();
@@ -454,9 +466,9 @@ require(['vs/editor/editor.main'], function () {
                         // Empty on both editors
                         cacheAssemblyEditor.push('');
                     }
-                } else if (i in cacheAssembly 
+                } else if (i in cacheAssembly
                         && cacheAssembly[i].split(/[^\w]/)[0] == disassemblySet[disassemblyIndex].split(/[^\w]/)[0]
-                        && hasLabel(cacheAssembly[i]) 
+                        && hasLabel(cacheAssembly[i])
                         && !hasLabel(disassemblySet[disassemblyIndex])) {
                     // Preserve instructions with user-defined labels
                     // if the mnemonic is the same after edits
@@ -482,6 +494,8 @@ require(['vs/editor/editor.main'], function () {
 
             isModelEditorSync = true;
             window.instanceEditor.setValue(cacheAssemblyEditor.join('\n'));
+
+            storeAssembly();
         })();
     };
 
@@ -501,6 +515,8 @@ require(['vs/editor/editor.main'], function () {
         isModelEditorSync = true;
         const editOperation = {identifier: id, range: range, text: text, forceMoveMarkers: true};
         window.instanceEditor.executeEdits("custom-code", [ editOperation ]);
+
+        storeAssembly();
     };
 
     //
@@ -658,6 +674,10 @@ require(['vs/editor/editor.main'], function () {
     // State
     //
 
+    // Used to load stored text content when the editor gets initialized,
+    // since there's no out-of-the-box functionality for that: https://github.com/microsoft/monaco-editor/issues/115
+    var isEditorInitialized = false;
+
     // Prevent `onDidChangeModelContent()` callbacks from executing when
     // changes were done during syncs, which must be done in a single
     // operation for this to work (either a single call to `setValue()`
@@ -713,6 +733,8 @@ require(['vs/editor/editor.main'], function () {
         } else {
             updateCacheOnAssemblyChanges(context, modelEditor);
             syncBytes();
+
+            storeAssembly();
         }
     });
 
@@ -730,8 +752,22 @@ require(['vs/editor/editor.main'], function () {
         } else {
             updateCacheOnBytesChanges(context, modelBytes);
             syncAssemblyEditor();
+
+            storeAssembly();
         }
     });
+
+    (new MutationObserver(function(mutations, observer) {
+        mutations.reduce(function(accumulator, current) {
+            return accumulator.concat(Array.prototype.slice.call(
+                current.addedNodes));
+        }, []).forEach((_) => {
+            if (!isEditorInitialized) {
+                loadAssembly();
+                isEditorInitialized = true;
+            }
+        });
+    })).observe(document.querySelector('#editor'), { childList: true });
 
     document.querySelector('#offset-input').onchange = function() {
         if (isValidHexNumber(document.getElementById('offset-input').value)) {
