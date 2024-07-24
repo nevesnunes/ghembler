@@ -1,6 +1,10 @@
 // @ts-check
 const { test, expect } = require('@playwright/test');
 
+// Note: Inner text from locators for editor lines do not return a
+// consistent order, we need to use generic assertions over model contents 
+// with retries, to also account for contents being empty before 
+// being updated with expected values.
 test.describe('Tests', () => {
 	let globalPage;
 
@@ -34,12 +38,21 @@ test.describe('Tests', () => {
         `);
     }
 
+    async function getAssemblyText() {
+        return await globalPage.evaluate(() => window.instanceEditor.getModel().getLinesContent().join('\n'));
+    }
+
+    async function getBytesText() {
+        return await globalPage.evaluate(() => window.instanceBytes.getModel().getLinesContent().join('\n'));
+    }
+
     test.beforeEach(async ({ page }) => {
         globalPage = page;
         await page.goto('http://localhost:8000/');
     });
 
     test('on assembly typed', async ({ page }) => {
+
         const assemblyText = `
 MOV AX,123
 .lbl:foo
@@ -57,8 +70,9 @@ eb f8
 
         await triggerAssemblyEditorCommand('type', { text: assemblyText });
 
-        expect(await page.locator(`#bytes .view-lines`), 'bytes fetched')
-            .toHaveText(bytesText, { useInnerText: true });
+        await expect(async () => {
+            expect(await getBytesText(), 'bytes fetched').toEqual(bytesText);
+        }).toPass({ timeout: 2000 });
 
         // Insert newline
         await editAssemblyEditor('5, 1, 5, 1', '\\n');
@@ -80,18 +94,18 @@ JMP foo
 eb f8
 `
 
-        expect(await page.locator(`#editor .view-lines`), 'assembly on insert at line 5')
-            .toHaveText(assemblyTextAfterInsert, { useInnerText: true });
-        expect(await page.locator(`#bytes .view-lines`), 'bytes on insert at line 5')
-            .toHaveText(bytesTextAfterInsert, { useInnerText: true });
+        await expect(async () => {
+            expect(await getAssemblyText(), 'assembly on insert at line 5').toEqual(assemblyTextAfterInsert);
+            expect(await getBytesText(), 'bytes on insert at line 5').toEqual(bytesTextAfterInsert);
+        }).toPass({ timeout: 2000 });
 
         // Delete newline
         await editAssemblyEditor('5, 1, 6, 1', '');
 
-        expect(await page.locator(`#editor .view-lines`), 'assembly on delete at line 5')
-            .toHaveText(assemblyText, { useInnerText: true });
-        expect(await page.locator(`#bytes .view-lines`), 'bytes on delete at line 5')
-            .toHaveText(bytesText, { useInnerText: true });
+        await expect(async () => {
+            expect(await getAssemblyText(), 'assembly on delete at line 5').toEqual(assemblyText);
+            expect(await getBytesText(), 'bytes on delete at line 5').toEqual(bytesText);
+        }).toPass({ timeout: 2000 });
     });
 
     test('on bytes typed', async ({ page }) => {
@@ -112,7 +126,9 @@ f2 48 90
 
         await triggerBytesEditorCommand('type', { text: bytesText });
 
-        expect(await page.locator(`#editor .view-lines`), 'assembly fetched').toHaveText(assemblyText, { useInnerText: true });
+        await expect(async () => {
+            expect(await getAssemblyText(), 'assembly fetched').toEqual(assemblyText);
+        }).toPass({ timeout: 2000 });
 
         // Insert newline
         await editBytesEditor('5, 1, 5, 1', '\\n');
@@ -134,17 +150,17 @@ f2 48 90
 4f e9 fa ff ff ff
 `
 
-        expect(await page.locator(`#editor .view-lines`), 'assembly on insert at line 5')
-            .toHaveText(assemblyTextAfterInsert, { useInnerText: true });
-        expect(await page.locator(`#bytes .view-lines`), 'bytes on insert at line 5')
-            .toHaveText(bytesTextAfterInsert, { useInnerText: true });
+        await expect(async () => {
+            expect(await getAssemblyText(), 'assembly on insert at line 5').toEqual(assemblyTextAfterInsert);
+            expect(await getBytesText(), 'bytes on insert at line 5').toEqual(bytesTextAfterInsert);
+        }).toPass({ timeout: 2000 });
 
         // Delete newline
         await editBytesEditor('5, 1, 6, 1', '');
 
-        expect(await page.locator(`#editor .view-lines`), 'assembly on delete at line 5')
-            .toHaveText(assemblyText, { useInnerText: true });
-        expect(await page.locator(`#bytes .view-lines`), 'bytes on delete at line 5')
-            .toHaveText(bytesText, { useInnerText: true });
+        await expect(async () => {
+            expect(await getAssemblyText(), 'assembly on delete at line 5').toEqual(assemblyText);
+            expect(await getBytesText(), 'bytes on delete at line 5').toEqual(bytesText);
+        }).toPass({ timeout: 2000 });
     });
 });
