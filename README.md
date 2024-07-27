@@ -93,9 +93,13 @@ curl -X POST -H "Content-Type: text/plain" --data "jp NZ/NE,XWA+1" http://localh
 
 ## Testing
 
-Run backend, then:
+Run backend with `-processor 'x86:LE:64:default'`, then:
 
 ```sh
+# Headless Mode
+npx playwright test --project=chromium
+
+# UI Mode
 npx playwright test --debug --ui --project=chromium
 ```
 

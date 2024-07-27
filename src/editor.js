@@ -315,28 +315,60 @@ require(['vs/editor/editor.main'], function () {
         newRangeLines[0] = newRangeLines[0] + modelBytes.getLineContent(change.range.startLineNumber).substr(0, change.range.startColumn);
         let newLastIdx = newRangeLines.length - 1;
         if (newLastIdx > 0) {
-            newRangeLines[newLastIdx] = newRangeLines[newLastIdx] + modelBytes.getLineContent(change.range.endLineNumber).substr(change.range.endColumn, MAX);
+            newRangeLines[newLastIdx] = newRangeLines[newLastIdx] + modelBytes.getLineContent(change.range.startLineNumber + linesAfter).substr(change.range.endColumn - 1, MAX);
         }
         let rangeIdx = 0;
         let lastInRangeLineNumber = change.range.endLineNumber + cacheOffset + 1;
         cacheOffsetLine = change.range.startLineNumber;
+
+        let assemblyLinesToAdd = 0;
+        if (cacheOffset > 0) {
+            assemblyLinesToAdd = cacheOffset;
+        }
+
+        let previousDirectives = undefined;
+        let previousDirectivesIndex = 0;
         for (let i = change.range.startLineNumber; i < lastInRangeLineNumber; i++) {
             cacheOffsetLine = i + 1;
 
-            let candidateBytes = undefined;
+            let candidateBytes = "";
             if (i in cacheBytes) {
                 candidateBytes = cacheBytes[i];
             }
             if (candidateBytes == newRangeLines[rangeIdx]) {
                 newCacheBytes[i] = candidateBytes;
-                if (candidateBytes) {
-                    if (i in cacheAssembly) {
-                    newCacheAssembly[i] = cacheAssembly[i];
-                    } else {
-                        newCacheAssembly[i] = modelEditor.getLineContent(i);
+                if (!candidateBytes) {
+                    if (!previousDirectives) {
+                        previousDirectives = [];
+                        for (let j = i; j < modelEditor.getLineCount() + 1; j++) {
+                            let candidateDirective = modelEditor.getLineContent(j);
+                            if (isDirective(candidateDirective)) {
+                                previousDirectives.push(candidateDirective);
+                            } else if (candidateDirective) {
+                                break;
+                            }
+                        }
                     }
+
+                    if (assemblyLinesToAdd > previousDirectives.length - 1) {
+                        newCacheAssembly[i] = candidateBytes;
+                        assemblyLinesToAdd--;
+                    } else if (previousDirectivesIndex < previousDirectives.length) {
+                        newCacheAssembly[i] = previousDirectives[previousDirectivesIndex];
+                        previousDirectivesIndex++;
+                    }
+                } else if (i in cacheAssembly) {
+                    newCacheAssembly[i] = cacheAssembly[i];
+                    previousDirectives = undefined;
+                } else {
+                    newCacheAssembly[i] = modelEditor.getLineContent(i);
+                    previousDirectives = undefined;
                 }
             } else {
+                if (previousDirectives && previousDirectivesIndex < previousDirectives.length) {
+                    newCacheAssembly[i] = previousDirectives[previousDirectivesIndex];
+                    previousDirectivesIndex++;
+                }
                 break;
             }
             rangeIdx += 1;
@@ -353,10 +385,13 @@ require(['vs/editor/editor.main'], function () {
             }
         }
 
-        //console.log(cacheOffset, cacheOffsetLine, "byt", cacheBytes, newCacheBytes, "asm", cacheAssembly, newCacheAssembly);
+        //console.log("linesToAdd", assemblyLinesToAdd, newRangeLines);
+        //console.log("cacheOffset", cacheOffset, cacheOffsetLine);
+        //console.log("cacheBytesDiff", '\n', cacheBytes, '\n', newCacheBytes);
+        //console.log("cacheAssemblyDiff", '\n', cacheAssembly, '\n', newCacheAssembly);
         cacheBytes = newCacheBytes;
         cacheAssembly = newCacheAssembly;
-    };
+    }
 
     const updateCacheOnAssemblyChanges = function(context, model) {
         const modelBytes = window.instanceBytes.getModel();
@@ -380,9 +415,10 @@ require(['vs/editor/editor.main'], function () {
         // In range: We compare lines, but also account for existing chars in the start and end lines, which are not part of the changed range.
         let newRangeLines = change.text.split('\n');
         newRangeLines[0] = newRangeLines[0] + model.getLineContent(change.range.startLineNumber).substr(0, change.range.startColumn);
-        let newLastIdx = newRangeLines.length - 1;
+        const newLastIdx = newRangeLines.length - 1;
         if (newLastIdx > 0) {
-            newRangeLines[newLastIdx] = newRangeLines[newLastIdx] + model.getLineContent(change.range.endLineNumber).substr(change.range.endColumn, MAX);
+            const maxLineNumber = Math.min(change.range.endLineNumber, model.getLineCount());
+            newRangeLines[newLastIdx] = newRangeLines[newLastIdx] + model.getLineContent(maxLineNumber).substr(change.range.endColumn - 1, MAX);
         }
         let rangeIdx = 0;
         for (let i = change.range.startLineNumber; i < change.range.endLineNumber + 1; i++) {
