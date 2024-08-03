@@ -6,6 +6,9 @@ require(['vs/editor/editor.main'], function () {
     // Constants
     //
 
+    const KEY_ASM = 'asm';
+    const KEY_BYTES = 'bytes';
+
     const LANGUAGE_EDITOR = 'langEditor';
     const LANGUAGE_BYTES = 'langBytes';
 
@@ -15,21 +18,20 @@ require(['vs/editor/editor.main'], function () {
     const MAX = 99999;
     const INVALID_LINE = -1;
     const UNKNOWN_BYTES = '??';
-    const STORAGE_ASSEMBLY = 'asm';
 
     //
     // Helper methods
     //
 
     const loadAssembly = () => {
-        let storedAssembly = localStorage.getItem(STORAGE_ASSEMBLY);
+        let storedAssembly = localStorage.getItem(KEY_ASM);
         if (storedAssembly) {
             window.instanceEditor.setValue(storedAssembly);
         }
     }
 
     const storeAssembly = () => {
-        localStorage.setItem(STORAGE_ASSEMBLY, window.instanceEditor.getModel().getLinesContent().join('\n'));
+        localStorage.setItem(KEY_ASM, window.instanceEditor.getModel().getLinesContent().join('\n'));
     }
 
     const hasLabel = (line) => {
@@ -200,11 +202,18 @@ require(['vs/editor/editor.main'], function () {
                     if (i == currentSyncBytesLineNumber) {
                         previousLength = currentSyncBytesLineLength;
                         previousData = currentSyncBytesLineData;
+
+                        cache[i - 1].bytes = previousData;
+                        cache[i - 1].hasPrev = true;
+
                         currentSyncBytesLineNumber = INVALID_LINE;
                         currentSyncBytesLineLength = 0;
                         currentSyncBytesLineData = '';
-                    } else if (cacheAssembly[i] == modelEditor.getLineContent(i)) {
-                        if (i >= cacheOffsetLine && (modelBytes.getLineCount() >= i - cacheOffset)) {
+                    } else if (cache[i - 1]?.asm == modelEditor.getLineContent(i)) {
+                        if (cache[i - 1]?.hasPrev) {
+                            previousData = cache[i - 1]?.bytes;
+                            previousLength = previousData.length;
+                        } else if (i >= cacheOffsetLine && (modelBytes.getLineCount() >= i - cacheOffset)) {
                             previousData = modelBytes.getLineContent(i - cacheOffset);
                             previousLength = previousData.length;
                         } else if (modelBytes.getLineCount() >= i) {
@@ -249,6 +258,8 @@ require(['vs/editor/editor.main'], function () {
                                 message: completion.data,
                                 severity: monaco.MarkerSeverity.Error,
                             });
+                        } else {
+                            console.error(`Unknown response at line '${i}': '${JSON.stringify(completion)}'`);
                         }
                     });
                     newBytes.push(hexBytes);
@@ -269,185 +280,124 @@ require(['vs/editor/editor.main'], function () {
             monaco.editor.setModelMarkers(window.instanceEditor.getModel(), OWNER_EDITOR, markers);
 
             isModelBytesSync = true;
+            const position = window.instanceBytes.getPosition();
             window.instanceBytes.setValue(newBytes.join('\n'));
+            window.instanceBytes.setPosition(position);
 
-            updateCache();
+            updateCacheWithBytes(newBytes);
         })();
     };
 
-    const updateCache = function() {
-        const modelBytes = window.instanceBytes.getModel();
-        for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
-            cacheBytes[i] = modelBytes.getLineContent(i);
-        }
-        const modelEditor = window.instanceEditor.getModel();
-        for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
-            cacheAssembly[i] = modelEditor.getLineContent(i);
+    const updateCacheWithAssembly = function(newAssembly) {
+        for (let i = 0; i < newAssembly.length; i++) {
+            cache[i].asm = newAssembly[i];
         }
     };
 
-    const updateCacheOnBytesChanges = function(context, modelBytes) {
-        const modelEditor = window.instanceEditor.getModel();
-
-        // FIXME: How to handle more than one change?
-        const change = context.changes[0];
-        const linesBefore = change.range.endLineNumber - change.range.startLineNumber;
-        const linesAfter = (change.text.match(/\n/g) || []).length;
-        cacheOffset = linesAfter - linesBefore;
-
-        let newCacheBytes = {};
-        let newCacheAssembly = {};
-
-        // Before range: Still the same lines.
-        for (let i = 1; i < change.range.startLineNumber; i++) {
-            if (i in cacheBytes && !!cacheBytes[i]) {
-                newCacheBytes[i] = cacheBytes[i];
-            } else {
-                newCacheBytes[i] = modelBytes.getLineContent(i);
-            }
-            if (i <= modelEditor.getLineCount()) {
-                newCacheAssembly[i] = modelEditor.getLineContent(i);
-            }
+    const updateCacheWithBytes = function(newBytes) {
+        for (let i = 0; i < newBytes.length; i++) {
+            cache[i].bytes = newBytes[i];
         }
+    };
 
-        // In range: We compare lines, but also account for existing chars in the start and end lines, which are not part of the changed range.
-        let newRangeLines = change.text.split('\n');
-        newRangeLines[0] = newRangeLines[0] + modelBytes.getLineContent(change.range.startLineNumber).substr(0, change.range.startColumn);
-        let newLastIdx = newRangeLines.length - 1;
-        if (newLastIdx > 0) {
-            newRangeLines[newLastIdx] = newRangeLines[newLastIdx] + modelBytes.getLineContent(change.range.startLineNumber + linesAfter).substr(change.range.endColumn - 1, MAX);
-        }
-        let rangeIdx = 0;
-        let lastInRangeLineNumber = change.range.endLineNumber + cacheOffset + 1;
-        cacheOffsetLine = change.range.startLineNumber;
-
-        let assemblyLinesToAdd = 0;
-        if (cacheOffset > 0) {
-            assemblyLinesToAdd = cacheOffset;
-        }
-
-        let previousDirectives = undefined;
-        let previousDirectivesIndex = 0;
-        for (let i = change.range.startLineNumber; i < lastInRangeLineNumber; i++) {
-            cacheOffsetLine = i + 1;
-
-            let candidateBytes = "";
-            if (i in cacheBytes) {
-                candidateBytes = cacheBytes[i];
-            }
-            if (candidateBytes == newRangeLines[rangeIdx]) {
-                newCacheBytes[i] = candidateBytes;
-                if (!candidateBytes) {
-                    if (!previousDirectives) {
-                        previousDirectives = [];
-                        for (let j = i; j < modelEditor.getLineCount() + 1; j++) {
-                            let candidateDirective = modelEditor.getLineContent(j);
-                            if (isDirective(candidateDirective)) {
-                                previousDirectives.push(candidateDirective);
-                            } else if (candidateDirective) {
-                                break;
-                            }
-                        }
-                    }
-
-                    if (assemblyLinesToAdd > previousDirectives.length - 1) {
-                        newCacheAssembly[i] = candidateBytes;
-                        assemblyLinesToAdd--;
-                    } else if (previousDirectivesIndex < previousDirectives.length) {
-                        newCacheAssembly[i] = previousDirectives[previousDirectivesIndex];
-                        previousDirectivesIndex++;
-                    }
-                } else if (i in cacheAssembly) {
-                    newCacheAssembly[i] = cacheAssembly[i];
-                    previousDirectives = undefined;
-                } else {
-                    newCacheAssembly[i] = modelEditor.getLineContent(i);
-                    previousDirectives = undefined;
-                }
-            } else {
-                if (previousDirectives && previousDirectivesIndex < previousDirectives.length) {
-                    newCacheAssembly[i] = previousDirectives[previousDirectivesIndex];
-                    previousDirectivesIndex++;
-                }
-                break;
-            }
-            rangeIdx += 1;
-        }
-
-        // After range: Matching lines are offset, e.g. if new lines were added, then cached lines previously had smaller line numbers, or vice-versa.
-        for (let i = cacheOffsetLine; i < modelBytes.getLineCount() + 1; i++) {
-            if ((i - cacheOffset) in cacheBytes) {
-                newCacheBytes[i] = cacheBytes[i - cacheOffset];
-            }
-
-            if ((i - cacheOffset) > 0 && (i - cacheOffset) <= modelEditor.getLineCount()) {
-                newCacheAssembly[i] = modelEditor.getLineContent(i - cacheOffset);
-            }
-        }
-
-        //console.log("linesToAdd", assemblyLinesToAdd, newRangeLines);
-        //console.log("cacheOffset", cacheOffset, cacheOffsetLine);
-        //console.log("cacheBytesDiff", '\n', cacheBytes, '\n', newCacheBytes);
-        //console.log("cacheAssemblyDiff", '\n', cacheAssembly, '\n', newCacheAssembly);
-        cacheBytes = newCacheBytes;
-        cacheAssembly = newCacheAssembly;
-    }
-
-    const updateCacheOnAssemblyChanges = function(context, model) {
+    const updateCacheOnChanges = function(context, model, key) {
         const modelBytes = window.instanceBytes.getModel();
+        const modelEditor = window.instanceEditor.getModel();
+        const lineCountBytes = modelBytes.getLineCount();
+        const lineCountEditor = modelEditor.getLineCount();
+        const lineCount = Math.max(lineCountBytes, lineCountEditor);
 
         // FIXME: How to handle more than one change?
         const change = context.changes[0];
         const linesBefore = change.range.endLineNumber - change.range.startLineNumber;
         const linesAfter = (change.text.match(/\n/g) || []).length;
         cacheOffset = linesAfter - linesBefore;
-        cacheOffsetLine = MAX;
 
-        let newCacheAssembly = {};
-
-        // Before range: Still the same lines.
-        for (let i = 1; i < change.range.startLineNumber; i++) {
-            if (i in cacheAssembly) {
-                newCacheAssembly[i] = cacheAssembly[i];
-            }
-        }
-
-        // In range: We compare lines, but also account for existing chars in the start and end lines, which are not part of the changed range.
-        let newRangeLines = change.text.split('\n');
-        newRangeLines[0] = newRangeLines[0] + model.getLineContent(change.range.startLineNumber).substr(0, change.range.startColumn);
-        const newLastIdx = newRangeLines.length - 1;
-        if (newLastIdx > 0) {
-            const maxLineNumber = Math.min(change.range.endLineNumber, model.getLineCount());
-            newRangeLines[newLastIdx] = newRangeLines[newLastIdx] + model.getLineContent(maxLineNumber).substr(change.range.endColumn - 1, MAX);
-        }
-        let rangeIdx = 0;
-        for (let i = change.range.startLineNumber; i < change.range.endLineNumber + 1; i++) {
-            if (cacheAssembly[i] == newRangeLines[rangeIdx]) {
-                newCacheAssembly[i] = cacheAssembly[i];
-                // If we don't see any mismatch in range, then this will
-                // be the next line after the range.
-                cacheOffsetLine = i + 1;
-            } else {
-                cacheOffsetLine = i;
+        // Match all identical lines from the start.
+        // We should have both lines before change range, and the first
+        // in-range modifications that resulted in previously present lines.
+        let newCache = [];
+        let startIdx = 1;
+        for (let i = 1; i < lineCountEditor + 1; i++) {
+            if (cache[i - 1]?.[key] != model.getLineContent(i)) {
                 break;
             }
-            rangeIdx += 1;
-        }
+            if (i >= change.range.startLineNumber && !model.getLineContent(i)) {
+                // HACK: Due to bytes being blank for directive lines, we must prevent
+                // them from being added here, otherwise they will be duplicated.
+                break;
+            }
+            newCache.push({
+                asm: cache[i - 1]?.asm || modelEditor.getLineContent(i),
+                bytes: cache[i - 1]?.bytes || modelBytes.getLineContent(i),
+                hasPrev: cache[i - 1]?.hasPrev || false,
+            });
+            startIdx++;
 
-        // After range: Matching lines are offset, e.g. if new lines were added, then cached lines previously had smaller line numbers, or vice-versa.
-        for (let i = cacheOffsetLine; i < model.getLineCount() + 1; i++) {
-            if ((i - cacheOffset) in cacheAssembly) {
-                newCacheAssembly[i] = cacheAssembly[i - cacheOffset];
+            // Special case: If this is a blank line, and a directive is on the next one,
+            // move the directive to this line. Otherwise, the directive would be lost on deleted lines.
+            if (cacheOffset < 0
+                    && i >= change.range.startLineNumber
+                    && isDirective(cache[i]?.asm)
+                    && !(newCache[i - 1]?.asm.trim())) {
+                newCache[i - 1].asm = cache[i].asm;
+                cache[i].asm = "";
             }
         }
 
-        // Nothing matched, might be a paste on an empty editor?
-        if (Object.keys(newCacheAssembly).length == 0) {
-            cacheOffset = 0;
-            cacheOffsetLine = MAX;
-        } else {
-            //console.log(cacheOffset, cacheOffsetLine, cacheAssembly, newCacheAssembly);
-            cacheAssembly = newCacheAssembly;
+        // Match all identical lines from the end.
+        // We should have both lines after change range, and the last
+        // in-range modifications that resulted in previously present lines.
+        let i = lineCount;
+        let asmIdx = lineCountEditor;
+        let bytesIdx = lineCountBytes;
+        let endNewCache = [];
+        for (; i > startIdx && i >= change.range.startLineNumber; i--) {
+            let keyIdx = key == KEY_ASM ? asmIdx : bytesIdx;
+            if (keyIdx < 1 || cache[keyIdx - 1 - cacheOffset]?.[key] != model.getLineContent(keyIdx)) {
+                break;
+            }
+            let asmOffset = key == KEY_ASM ? cacheOffset : 0;
+            let bytesOffset = key == KEY_BYTES ? cacheOffset : 0;
+            endNewCache.unshift({
+                asm: cache[asmIdx - 1 - asmOffset]?.asm || modelEditor.getLineContent(asmIdx),
+                bytes: cache[bytesIdx - 1 - bytesOffset]?.bytes || modelBytes.getLineContent(bytesIdx),
+                hasPrev: cache[bytesIdx - 1 - bytesOffset]?.hasPrev || false,
+            });
+            asmIdx--;
+            bytesIdx--;
+        }
+
+        // In range: Invalidate previously cached lines.
+        let inRangeNewCache = [];
+        for (; i >= startIdx && i >= change.range.startLineNumber; i--) {
+            let keyIdx = key == KEY_ASM ? asmIdx : bytesIdx;
+            if (startIdx > keyIdx) {
+                break; // Already covered on match from the start.
+            }
+            inRangeNewCache.unshift({
+                asm: (key == KEY_BYTES || asmIdx < 1) ? "" : modelEditor.getLineContent(asmIdx),
+                bytes: (key == KEY_ASM || bytesIdx < 1) ? "" : modelBytes.getLineContent(bytesIdx),
+                hasPrev: key == KEY_BYTES,
+            });
+            asmIdx--;
+            bytesIdx--;
+        }
+
+        //console.log("i startIdx key asmIdx bytesIdx:", i, startIdx, key, asmIdx, bytesIdx);
+        //console.log("newCache:", newCache);
+        //console.log("inRangeNewCache:", inRangeNewCache);
+        //console.log("endNewCache:", endNewCache);
+        cache = newCache.concat(inRangeNewCache.concat(endNewCache));
+
+        for (let i = 0; i < cache.length; i++) {
+            // Special case: If this is a blank line, and a directive was set on the last one,
+            // move the directive to this line. Otherwise, new instructions couldn't be set
+            // before the directive without modifying the previous instruction.
+            if (isDirective(cache[i - 2]?.asm) && !(cache[i - 1]?.asm.trim())) {
+                cache[i - 1].asm = cache[i - 2].asm;
+                cache[i - 2].asm = "";
+            }
         }
     };
 
@@ -471,20 +421,45 @@ require(['vs/editor/editor.main'], function () {
 
     const syncAssemblyEditor = function() {
         (async () => {
+            let isModelSyncBytesRequired = true;
             let baseOffset = parseBaseOffset();
-            let cacheAssemblyEditor = [];
+            let newAssembly = [];
             let emptyLines = new Set();
             let requestLines = [];
             const modelBytes = window.instanceBytes.getModel();
             const modelEditor = window.instanceEditor.getModel();
             for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
+                let cacheIdx = i - 1;
                 let line = modelBytes.getLineContent(i).trim();
                 if (!line) {
                     emptyLines.add(i);
+                    if (cacheIdx in cache) {
+                        let candidateDirective = cache[cacheIdx]?.asm;
+                        if (isDirective(candidateDirective)) {
+                            let candidateLabel = parseLabelDirective(candidateDirective);
+                            if (candidateLabel) {
+                                knownLabels.add(candidateLabel[1]);
+                                requestLines.push({
+                                    "address": baseOffset,
+                                    "data": candidateLabel[1],
+                                    "type": "label",
+                                });
+                            }
+                            let candidateOrigin = parseOriginDirective(candidateDirective);
+                            if (candidateOrigin) {
+                                requestLines.push({
+                                    "address": baseOffset,
+                                    "data": candidateOrigin[1],
+                                    "type": "origin",
+                                });
+                            }
+                        }
+                    }
                 } else {
                     requestLines.push({
                         "address": baseOffset,
-                        "data": line
+                        "data": line,
+                        "type": "instruction",
                     });
                 }
             }
@@ -494,27 +469,47 @@ require(['vs/editor/editor.main'], function () {
             let markers = [];
             let disassemblyIndex = 0;
             for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
+                let disassemblyCandidate = "";
+                if (disassemblyIndex < disassemblySet.length) {
+                    disassemblyCandidate = disassemblySet[disassemblyIndex];
+                }
+
+                let cacheIdx = i - 1;
                 if (emptyLines.has(i)) {
-                    if (i in cacheAssembly) {
+                    if (cache[cacheIdx]?.asm) {
                         // Preserve directives
-                        cacheAssemblyEditor.push(cacheAssembly[i]);
+                        newAssembly.push(cache[cacheIdx]?.asm);
+                        disassemblyIndex++;
                     } else {
                         // Empty on both editors
-                        cacheAssemblyEditor.push('');
+                        newAssembly.push('');
                     }
-                } else if (i in cacheAssembly
-                        && cacheAssembly[i].split(/[^\w]/)[0] == disassemblySet[disassemblyIndex].split(/[^\w]/)[0]
-                        && hasLabel(cacheAssembly[i])
-                        && !hasLabel(disassemblySet[disassemblyIndex])) {
-                    // Preserve instructions with user-defined labels
-                    // if the mnemonic is the same after edits
-                    cacheAssemblyEditor.push(cacheAssembly[i]);
-                } else if (disassemblyIndex < disassemblySet.length) {
-                    let disassembly = disassemblySet[disassemblyIndex];
-                    cacheAssemblyEditor.push(disassembly);
-
-                    disassemblyIndex++;
-                } else {
+                } else if (disassemblyCandidate && disassemblyCandidate.type === "ok") {
+                    if (cacheIdx in cache
+                            && cache[cacheIdx].asm.split(/[^\w]/)[0] == disassemblyCandidate.data.split(/[^\w]/)[0]
+                            && hasLabel(cache[cacheIdx].asm)
+                            && !hasLabel(disassemblyCandidate.data)) {
+                        // Preserve instructions with user-defined labels
+                        // if the mnemonic is the same after edits
+                        newAssembly.push(cache[cacheIdx].asm);
+                        disassemblyIndex++;
+                    } else {
+                        newAssembly.push(disassemblyCandidate.data);
+                        disassemblyIndex++;
+                    }
+                } else if (disassemblyCandidate && disassemblyCandidate.type === "error") {
+                    markers.push({
+                        startLineNumber: i,
+                        endLineNumber: i,
+                        startColumn: 0,
+                        endColumn: MAX,
+                        message: disassemblyCandidate.data,
+                        severity: monaco.MarkerSeverity.Error,
+                    });
+                } else if (disassemblyCandidate && disassemblyCandidate.type === "assembly_error") {
+                    // x86 spams several constructor errors...
+                    // console.error(disassemblyCandidate);
+                } else if (disassemblyCandidate && disassemblyIndex >= disassemblySet.length) {
                     markers.push({
                         startLineNumber: i,
                         endLineNumber: i,
@@ -523,15 +518,32 @@ require(['vs/editor/editor.main'], function () {
                         message: `Line not in disassembly set (${disassemblyIndex} >= ${disassemblySet.length})`,
                         severity: monaco.MarkerSeverity.Error,
                     });
+                } else {
+                    console.error(`Unknown candidate at index '${disassemblyIndex}': '${JSON.stringify(disassemblyCandidate)}'`);
+                    console.error("Request lines:", requestLines);
+                    console.error("Response:", disassemblySet);
                 }
             }
 
             monaco.editor.setModelMarkers(window.instanceEditor.getModel(), OWNER_EDITOR, markers);
 
             isModelEditorSync = true;
-            window.instanceEditor.setValue(cacheAssemblyEditor.join('\n'));
+            window.instanceEditor.setValue(newAssembly.join('\n'));
 
             storeAssembly();
+            updateCacheWithAssembly(newAssembly);
+
+            for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
+                if (modelEditor.getLineContent(i) == UNKNOWN_BYTES) {
+                    isModelSyncBytesRequired = false;
+                }
+            }
+            if (isModelSyncBytesRequired) {
+                // Need to resync bytes when instruction lengths change, so that relative addressing 
+                // in unmodified instructions are also updated.
+                isModelBytesSync = true;
+                syncBytes();
+            }
         })();
     };
 
@@ -646,6 +658,11 @@ require(['vs/editor/editor.main'], function () {
                         message: k.data,
                         severity: monaco.MarkerSeverity.Error,
                     });
+                } else if (k.type === "assembly_error") {
+                    // x86 spams several constructor errors...
+                    // console.error(disassemblyCandidate);
+                } else {
+                    console.error(`Unknown response at line '${position.lineNumber}': '${JSON.stringify(k)}'`);
                 }
 
                 return result;
@@ -683,8 +700,8 @@ require(['vs/editor/editor.main'], function () {
                     "address": 0,
                     "data": line
                 }]);
-                if (disassembledLines.length > 0) {
-                    syncAssemblyLine(position.lineNumber, disassembledLines[0]);
+                if (disassembledLines.length > 0 && disassembledLines[0].type === "ok") {
+                    syncAssemblyLine(position.lineNumber, disassembledLines[0].data);
                     isValidCompletion = true;
                 }
             }
@@ -725,8 +742,8 @@ require(['vs/editor/editor.main'], function () {
     var currentSyncBytesLineLength = 0;
     var currentSyncBytesLineData = '';
 
-    var cacheAssembly = {};
-    var cacheBytes = {};
+    var cache = [];
+
     var cacheOffset = 0;
     var cacheOffsetLine = MAX;
     var knownLabels = new Set();
@@ -767,7 +784,7 @@ require(['vs/editor/editor.main'], function () {
         if (isModelEditorSync) {
             isModelEditorSync = false;
         } else {
-            updateCacheOnAssemblyChanges(context, modelEditor);
+            updateCacheOnChanges(context, modelEditor, KEY_ASM);
             syncBytes();
 
             storeAssembly();
@@ -786,7 +803,7 @@ require(['vs/editor/editor.main'], function () {
         if (isModelBytesSync) {
             isModelBytesSync = false;
         } else {
-            updateCacheOnBytesChanges(context, modelBytes);
+            updateCacheOnChanges(context, modelBytes, KEY_BYTES);
             syncAssemblyEditor();
 
             storeAssembly();

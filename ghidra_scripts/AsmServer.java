@@ -253,7 +253,8 @@ public class AsmServer extends GhidraScript {
 				for (final AssemblyCompletion co : computeCompletions(nextAddress, line.data())) {
 					if (co instanceof AssemblyInstruction) {
 						// Same instruction was assembled
-						if (line.previousData.replaceAll("\\s+","").equalsIgnoreCase(co.getDisplay().replaceAll("\\s+",""))) {
+						if (line.previousData.replaceAll("\\s+", "")
+								.equalsIgnoreCase(co.getDisplay().replaceAll("\\s+", ""))) {
 							candidateInstruction = (AssemblyInstruction) co;
 							break;
 						}
@@ -263,7 +264,12 @@ public class AsmServer extends GhidraScript {
 						// we need to compute the next instruction's address, picking one of the
 						// possible encodings (which might not match what the user previously picked).
 						long candidateDiff = Math.abs(co.getDisplay().length() - line.previousLength);
-						println(String.format("%s: %s-%s=%s last=%s\n", co.getDisplay().replaceAll("\\s+", ""), co.getDisplay().length(), line.previousLength, candidateDiff, lastDiff));
+						println(String.format("%s: %s-%s=%s last=%s\n",
+								co.getDisplay().replaceAll("\\s+", ""),
+								co.getDisplay().length(),
+								line.previousLength,
+								candidateDiff,
+								lastDiff));
 						if (candidateDiff < lastDiff) {
 							lastDiff = candidateDiff;
 							candidateInstruction = (AssemblyInstruction) co;
@@ -454,6 +460,7 @@ public class AsmServer extends GhidraScript {
 			Gson gson = new GsonBuilder().setPrettyPrinting().create();
 			try (OutputStream os = he.getResponseBody()) {
 				JsonWriter jsonWriter = new JsonWriter(new OutputStreamWriter(os));
+				jsonWriter.beginArray();
 
 				if (isBatch) {
 					computeDisassemblyInBatch(gson, jsonWriter, lines);
@@ -461,6 +468,7 @@ public class AsmServer extends GhidraScript {
 					computeDisassemblyInStream(gson, jsonWriter, lines);
 				}
 
+				jsonWriter.endArray();
 				jsonWriter.close();
 			} catch (Exception e) {
 				printerr(e.getMessage());
@@ -477,41 +485,87 @@ public class AsmServer extends GhidraScript {
 
 	private void computeDisassemblyInBatch(Gson gson, JsonWriter jsonWriter, List<AssemblyLine> lines)
 			throws MemoryAccessException {
-		JsonArray jsonArray = new JsonArray();
-
 		Address nextAddress = lines.get(0).address();
 		for (final AssemblyLine line : lines) {
-			try {
-				putAt(nextAddress, line.data());
-			} catch (Exception e) {
-				printerr(e.getMessage());
-				printerr(Arrays.stream(e.getStackTrace())
-						.map(StackTraceElement::toString)
-						.collect(Collectors.joining("\n\t")));
+			if (line.type().equals(TYPE_DIRECTIVE_ORIGIN)) {
+				Address baseAddress = line.address();
+				Address originAddress = toAddr(line.data());
+				if (originAddress == null) {
+					JsonObject json = new JsonObject();
+					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
+					json.addProperty(ASSEMBLER_COMPLETION_DATA, String.format("Invalid origin '%s'", line.data()));
+					gson.toJson(json, jsonWriter);
+				} else {
+					nextAddress = toAddr(baseAddress.getUnsignedOffset() + originAddress.getUnsignedOffset());
 
-				jsonArray.add(new JsonPrimitive(UNKNOWN_BYTES));
+					JsonObject json = new JsonObject();
+					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
+					json.addProperty(ASSEMBLER_COMPLETION_DATA, "");
+					gson.toJson(json, jsonWriter);
+				}
+			} else if (line.type().equals(TYPE_DIRECTIVE_LABEL)) {
+				try {
+					putSymbol(nextAddress, line.data());
 
-				continue;
-			}
+					JsonObject json = new JsonObject();
+					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
+					json.addProperty(ASSEMBLER_COMPLETION_DATA, "");
+					gson.toJson(json, jsonWriter);
+				} catch (Exception e) {
+					printerr(e.getMessage());
+					printerr(Arrays.stream(e.getStackTrace())
+							.map(StackTraceElement::toString)
+							.collect(Collectors.joining("\n\t")));
 
-			disassembler.disassemble(nextAddress, new AddressSet(nextAddress), false);
-			final Instruction ins = currentProgram.getListing().getInstructionAt(nextAddress);
-			if (ins == null) {
-				printerr(String.format("Null instruction @ 0x%08x", nextAddress.getUnsignedOffset()));
-				jsonArray.add(new JsonPrimitive(UNKNOWN_BYTES));
+					JsonObject json = new JsonObject();
+					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
+					json.addProperty(ASSEMBLER_COMPLETION_DATA, e.getMessage());
+					gson.toJson(json, jsonWriter);
+				}
+			} else if (line.type().equals(TYPE_INSTRUCTION)) {
+				try {
+					putAt(nextAddress, line.data());
+				} catch (Exception e) {
+					printerr(e.getMessage());
+					printerr(Arrays.stream(e.getStackTrace())
+							.map(StackTraceElement::toString)
+							.collect(Collectors.joining("\n\t")));
+
+					JsonObject json = new JsonObject();
+					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
+					json.addProperty(ASSEMBLER_COMPLETION_DATA, UNKNOWN_BYTES);
+					gson.toJson(json, jsonWriter);
+
+					continue;
+				}
+
+				disassembler.disassemble(nextAddress, new AddressSet(nextAddress), false);
+				final Instruction ins = currentProgram.getListing().getInstructionAt(nextAddress);
+				if (ins == null) {
+					printerr(String.format("Null instruction @ 0x%08x", nextAddress.getUnsignedOffset()));
+
+					JsonObject json = new JsonObject();
+					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
+					json.addProperty(ASSEMBLER_COMPLETION_DATA, UNKNOWN_BYTES);
+					gson.toJson(json, jsonWriter);
+				} else {
+					nextAddress = toAddr(nextAddress.getUnsignedOffset() + ins.getBytes().length);
+
+					JsonObject json = new JsonObject();
+					json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
+					json.addProperty(ASSEMBLER_COMPLETION_DATA, ins.toString());
+					gson.toJson(json, jsonWriter);
+				}
 			} else {
-				nextAddress = toAddr(nextAddress.getUnsignedOffset() + ins.getBytes().length);
-
-				jsonArray.add(new JsonPrimitive(ins.toString()));
+				JsonObject json = new JsonObject();
+				json.addProperty(ASSEMBLER_COMPLETION_TYPE, "error");
+				json.addProperty(ASSEMBLER_COMPLETION_DATA, String.format("Unknown type '%s'", line.type()));
+				gson.toJson(json, jsonWriter);
 			}
 		}
-
-		gson.toJson(jsonArray, jsonWriter);
 	}
 
 	private void computeDisassemblyInStream(Gson gson, JsonWriter jsonWriter, List<AssemblyLine> lines) {
-		JsonArray jsonArray = new JsonArray();
-
 		for (final AssemblyLine line : lines) {
 			try {
 				putAt(line.address(), line.data());
@@ -521,7 +575,10 @@ public class AsmServer extends GhidraScript {
 						.map(StackTraceElement::toString)
 						.collect(Collectors.joining("\n\t")));
 
-				jsonArray.add(new JsonPrimitive(UNKNOWN_BYTES));
+				JsonObject json = new JsonObject();
+				json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
+				json.addProperty(ASSEMBLER_COMPLETION_DATA, UNKNOWN_BYTES);
+				gson.toJson(json, jsonWriter);
 
 				continue;
 			}
@@ -530,13 +587,18 @@ public class AsmServer extends GhidraScript {
 			final Instruction ins = currentProgram.getListing().getInstructionAt(line.address());
 			if (ins == null) {
 				printerr(String.format("Null instruction @ 0x%08x", line.address().getUnsignedOffset()));
-				jsonArray.add(new JsonPrimitive(UNKNOWN_BYTES));
+
+				JsonObject json = new JsonObject();
+				json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
+				json.addProperty(ASSEMBLER_COMPLETION_DATA, UNKNOWN_BYTES);
+				gson.toJson(json, jsonWriter);
 			} else {
-				jsonArray.add(new JsonPrimitive(ins.toString()));
+				JsonObject json = new JsonObject();
+				json.addProperty(ASSEMBLER_COMPLETION_TYPE, "ok");
+				json.addProperty(ASSEMBLER_COMPLETION_DATA, ins.toString());
+				gson.toJson(json, jsonWriter);
 			}
 		}
-
-		gson.toJson(jsonArray, jsonWriter);
 	}
 
 	private void addCORS(HttpExchange exchange, boolean isOptions) {
