@@ -6,7 +6,7 @@ Example using [Toshiba TLCS-900/H](https://github.com/nevesnunes/ghidra-tlcs900h
 
 ![](./img/1.png)
 
-Example using x86-64 (jump to relative vs absolute address):
+Example using x86-64 (jump to absolute address `0x5` vs relative address `0x2005`):
 
 ![](./img/2.png)
 
