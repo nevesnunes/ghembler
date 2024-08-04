@@ -6,7 +6,7 @@ Example using [Toshiba TLCS-900/H](https://github.com/nevesnunes/ghidra-tlcs900h
 
 ![](./img/1.png)
 
-Example using x86-64 (jump to absolute address `0x5` vs relative address `0x2005` with label `foo`):
+Example using x86-64 (jump from origin offset `0xa` to absolute address `0x5` vs relative address `0x2005` with label `foo`):
 
 ![](./img/2.png)
 
@@ -47,6 +47,8 @@ I'd also like to introduce some assembler-specific features (directives/macros/l
 
 ## Running
 
+Tested with Ghidra 10.3.2, on Debian GNU/Linux 12.
+
 Backend (Ghidra script):
 
 ```sh
@@ -55,13 +57,14 @@ dd if=/dev/zero of=/tmp/0.bin bs=1024 iflag=count_bytes count=$((0x10000))
 
 # Run script headless, wait until ready:
 # INFO  AsmServer.java> Listening at port 18000... (GhidraScript)
-GHIDRA_INSTALL_DIR=FIXME
-GHIDRA_PROJECT_DIR=FIXME
-GHIDRA_PROJECT_NAME=FIXME
+GHIDRA_INSTALL_DIR=/home/foo/ghidra_10.3.2_PUBLIC # FIXME
+GHIDRA_PROJECT_DIR=/home/foo/ghidra_projects # FIXME
+GHIDRA_PROJECT_NAME=foo # FIXME
+GHIDRA_PROCESSOR=x86:LE:64:default # FIXME
 "$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "$GHIDRA_PROJECT_DIR/" "$GHIDRA_PROJECT_NAME/_headless" \
         -import /tmp/0.bin \
         -overwrite \
-        -processor 'TLCS900H:LE:32:default' \
+        -processor "$GHIDRA_PROCESSOR" \
         -noanalysis \
         -scriptPath ./ghidra_scripts \
         -postScript AsmServer.java
@@ -72,6 +75,7 @@ Frontend:
 ```sh
 npm install
 npm run server
+# Listening at http://localhost:8000
 ```
 
 [Optional] Sanity check:
