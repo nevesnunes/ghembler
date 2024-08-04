@@ -13,7 +13,7 @@ test.describe('Tests', () => {
 
     async function triggerAssemblyEditorCommand(commandId, args) {
         return await globalPage.evaluate(
-			`window.instanceEditor.trigger(null, '${commandId}', ${args ? JSON.stringify(args) : 'undefined'});`
+			`window.instanceAssembly.trigger(null, '${commandId}', ${args ? JSON.stringify(args) : 'undefined'});`
         );
     }
 
@@ -28,7 +28,7 @@ test.describe('Tests', () => {
             const range = new monaco.Range(${range});
             const id = { major: 1, minor: 1 };
             const editOperation = {identifier: id, range: range, text: '${text}', forceMoveMarkers: true};
-            window.instanceEditor.executeEdits("custom-code", [ editOperation ]);
+            window.instanceAssembly.executeEdits("custom-code", [ editOperation ]);
         `);
     }
 
@@ -45,7 +45,7 @@ test.describe('Tests', () => {
         return await globalPage.evaluate(async () => {
             const delay = ms => new Promise(res => setTimeout(res, ms));
             await delay(100);
-            return window.instanceEditor.getModel().getLinesContent().join('\n');
+            return window.instanceAssembly.getModel().getLinesContent().join('\n');
         });
     }
 

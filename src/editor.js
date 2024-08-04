@@ -9,10 +9,10 @@ require(['vs/editor/editor.main'], function () {
     const KEY_ASM = 'asm';
     const KEY_BYTES = 'bytes';
 
-    const LANGUAGE_EDITOR = 'langEditor';
+    const LANGUAGE_ASM = 'langAssembly';
     const LANGUAGE_BYTES = 'langBytes';
 
-    const OWNER_EDITOR = 'ownerEditor';
+    const OWNER_ASM = 'ownerAssembly';
     const OWNER_BYTES = 'ownerBytes';
 
     const MAX = 99999;
@@ -31,12 +31,12 @@ require(['vs/editor/editor.main'], function () {
     const loadAssembly = () => {
         let storedAssembly = localStorage.getItem(KEY_ASM);
         if (storedAssembly) {
-            window.instanceEditor.setValue(storedAssembly);
+            window.instanceAssembly.setValue(storedAssembly);
         }
     }
 
     const storeAssembly = () => {
-        localStorage.setItem(KEY_ASM, window.instanceEditor.getModel().getLinesContent().join('\n'));
+        localStorage.setItem(KEY_ASM, window.instanceAssembly.getModel().getLinesContent().join('\n'));
     }
 
     const hasLabel = (line) => {
@@ -130,14 +130,14 @@ require(['vs/editor/editor.main'], function () {
 
     const currentByteOffset = function(editorLineNumber, startLineNumber, offset) {
         const modelBytes = window.instanceBytes.getModel();
-        const modelEditor = window.instanceEditor.getModel();
+        const modelAssembly = window.instanceAssembly.getModel();
         for (var i = startLineNumber; i < modelBytes.getLineCount() + 1; i++) {
             if (i === editorLineNumber) {
                 break;
             }
             let line = modelBytes.getLineContent(i).trimStart();
             if (!line) {
-                const disassembledLine = modelEditor.getLineContent(i).trim();
+                const disassembledLine = modelAssembly.getLineContent(i).trim();
                 if (isDirective(disassembledLine)) {
                     let candidateOrigin = parseOriginDirective(disassembledLine);
                     if (candidateOrigin) {
@@ -162,9 +162,9 @@ require(['vs/editor/editor.main'], function () {
             let emptyLines = new Set();
             let requestLines = [];
             const modelBytes = window.instanceBytes.getModel();
-            const modelEditor = window.instanceEditor.getModel();
-            for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
-                let line = modelEditor.getLineContent(i).trim();
+            const modelAssembly = window.instanceAssembly.getModel();
+            for (let i = 1; i < modelAssembly.getLineCount() + 1; i++) {
+                let line = modelAssembly.getLineContent(i).trim();
                 if (!line) {
                     emptyLines.add(i);
                 } else if (isDirective(line)) {
@@ -214,7 +214,7 @@ require(['vs/editor/editor.main'], function () {
                         currentSyncBytesLineNumber = INVALID_LINE;
                         currentSyncBytesLineLength = 0;
                         currentSyncBytesLineData = '';
-                    } else if (cache[i - 1]?.asm == modelEditor.getLineContent(i)) {
+                    } else if (cache[i - 1]?.asm == modelAssembly.getLineContent(i)) {
                         if (cache[i - 1]?.hasPrev) {
                             previousData = cache[i - 1]?.bytes;
                             previousLength = previousData.length;
@@ -239,7 +239,7 @@ require(['vs/editor/editor.main'], function () {
 
             let markers = [];
             let completionIndex = 0;
-            for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
+            for (let i = 1; i < modelAssembly.getLineCount() + 1; i++) {
                 if (emptyLines.has(i)) {
                     newBytes.push('');
                 } else if (completionIndex < completionSet.length) {
@@ -282,7 +282,7 @@ require(['vs/editor/editor.main'], function () {
                 }
             }
 
-            monaco.editor.setModelMarkers(window.instanceEditor.getModel(), OWNER_EDITOR, markers);
+            monaco.editor.setModelMarkers(window.instanceAssembly.getModel(), OWNER_ASM, markers);
 
             isModelBytesSync = true;
             const position = window.instanceBytes.getPosition();
@@ -307,11 +307,11 @@ require(['vs/editor/editor.main'], function () {
 
     const updateCacheOnChanges = function(context, model, key) {
         const modelBytes = window.instanceBytes.getModel();
-        const modelEditor = window.instanceEditor.getModel();
+        const modelAssembly = window.instanceAssembly.getModel();
         const lineCountBytes = modelBytes.getLineCount();
-        const lineCountEditor = modelEditor.getLineCount();
-        const lineCountMax = Math.max(lineCountBytes, lineCountEditor);
-        const lineCount = key == KEY_ASM ? lineCountEditor : lineCountBytes;
+        const lineCountAssembly = modelAssembly.getLineCount();
+        const lineCountMax = Math.max(lineCountBytes, lineCountAssembly);
+        const lineCount = key == KEY_ASM ? lineCountAssembly : lineCountBytes;
 
         // FIXME: How to handle more than one change?
         const change = context.changes[0];
@@ -334,7 +334,7 @@ require(['vs/editor/editor.main'], function () {
                 break;
             }
             newCache.push({
-                asm: cache[i - 1]?.asm || modelEditor.getLineContent(i),
+                asm: cache[i - 1]?.asm || modelAssembly.getLineContent(i),
                 bytes: cache[i - 1]?.bytes || modelBytes.getLineContent(i),
                 hasPrev: cache[i - 1]?.hasPrev || false,
             });
@@ -355,7 +355,7 @@ require(['vs/editor/editor.main'], function () {
         // We should have both lines after change range, and the last
         // in-range modifications that resulted in previously present lines.
         let i = lineCountMax;
-        let asmIdx = lineCountEditor;
+        let asmIdx = lineCountAssembly;
         let bytesIdx = lineCountBytes;
         let endNewCache = [];
         for (; i > startIdx && i >= change.range.startLineNumber; i--) {
@@ -366,7 +366,7 @@ require(['vs/editor/editor.main'], function () {
             let asmOffset = key == KEY_ASM ? cacheOffset : 0;
             let bytesOffset = key == KEY_BYTES ? cacheOffset : 0;
             endNewCache.unshift({
-                asm: cache[asmIdx - 1 - asmOffset]?.asm || modelEditor.getLineContent(asmIdx),
+                asm: cache[asmIdx - 1 - asmOffset]?.asm || modelAssembly.getLineContent(asmIdx),
                 bytes: cache[bytesIdx - 1 - bytesOffset]?.bytes || modelBytes.getLineContent(bytesIdx),
                 hasPrev: cache[bytesIdx - 1 - bytesOffset]?.hasPrev || false,
             });
@@ -382,7 +382,7 @@ require(['vs/editor/editor.main'], function () {
                 break; // Already covered on match from the start.
             }
             inRangeNewCache.unshift({
-                asm: (key == KEY_BYTES || asmIdx < 1) ? "" : modelEditor.getLineContent(asmIdx),
+                asm: (key == KEY_BYTES || asmIdx < 1) ? "" : modelAssembly.getLineContent(asmIdx),
                 bytes: (key == KEY_ASM || bytesIdx < 1) ? "" : modelBytes.getLineContent(bytesIdx),
                 hasPrev: key == KEY_BYTES,
             });
@@ -433,7 +433,7 @@ require(['vs/editor/editor.main'], function () {
             let emptyLines = new Set();
             let requestLines = [];
             const modelBytes = window.instanceBytes.getModel();
-            const modelEditor = window.instanceEditor.getModel();
+            const modelAssembly = window.instanceAssembly.getModel();
             for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
                 let cacheIdx = i - 1;
                 let line = modelBytes.getLineContent(i).trim();
@@ -531,16 +531,16 @@ require(['vs/editor/editor.main'], function () {
                 }
             }
 
-            monaco.editor.setModelMarkers(window.instanceEditor.getModel(), OWNER_EDITOR, markers);
+            monaco.editor.setModelMarkers(window.instanceAssembly.getModel(), OWNER_ASM, markers);
 
-            isModelEditorSync = true;
-            window.instanceEditor.setValue(newAssembly.join('\n'));
+            isModelAssemblySync = true;
+            window.instanceAssembly.setValue(newAssembly.join('\n'));
 
             storeAssembly();
             updateCacheWithAssembly(newAssembly);
 
-            for (let i = 1; i < modelEditor.getLineCount() + 1; i++) {
-                if (modelEditor.getLineContent(i) == UNKNOWN_BYTES) {
+            for (let i = 1; i < modelAssembly.getLineCount() + 1; i++) {
+                if (modelAssembly.getLineContent(i) == UNKNOWN_BYTES) {
                     isModelSyncBytesRequired = false;
                 }
             }
@@ -559,16 +559,16 @@ require(['vs/editor/editor.main'], function () {
 
         // If the target editor has less lines than the target line to edit,
         // we need to prepend as many newlines as needed to match both editors
-        let modelEditor = window.instanceEditor.getModel();
-        let linesToAdd = lineNumber - modelEditor.getLineCount();
+        let modelAssembly = window.instanceAssembly.getModel();
+        let linesToAdd = lineNumber - modelAssembly.getLineCount();
         while (linesToAdd > 0) {
             text = '\n' + text;
             linesToAdd--;
         }
 
-        isModelEditorSync = true;
+        isModelAssemblySync = true;
         const editOperation = {identifier: id, range: range, text: text, forceMoveMarkers: true};
-        window.instanceEditor.executeEdits("custom-code", [ editOperation ]);
+        window.instanceAssembly.executeEdits("custom-code", [ editOperation ]);
 
         storeAssembly();
     };
@@ -577,10 +577,10 @@ require(['vs/editor/editor.main'], function () {
     // Language methods
     //
 
-    monaco.languages.register({ id: LANGUAGE_EDITOR });
+    monaco.languages.register({ id: LANGUAGE_ASM });
 
-    monaco.languages.onLanguage(LANGUAGE_EDITOR, async () => {
-        monaco.languages.setMonarchTokensProvider(LANGUAGE_EDITOR, {
+    monaco.languages.onLanguage(LANGUAGE_ASM, async () => {
+        monaco.languages.setMonarchTokensProvider(LANGUAGE_ASM, {
             tokenizer: {
                 root: [
                     [/^\s*\.[0-9a-zA-Z]+:.*/, 'annotation'],
@@ -593,12 +593,12 @@ require(['vs/editor/editor.main'], function () {
         });
     });
 
-    monaco.languages.setLanguageConfiguration(LANGUAGE_EDITOR, {
+    monaco.languages.setLanguageConfiguration(LANGUAGE_ASM, {
         // Completions require all tokens to be passed (i.e. mnemonics and operands), so we match printable characters and spaces
         wordPattern: /([^\s]| )+/
     });
 
-    monaco.languages.registerCompletionItemProvider(LANGUAGE_EDITOR, {
+    monaco.languages.registerCompletionItemProvider(LANGUAGE_ASM, {
         provideCompletionItems: async (model, position) => {
             let editorLineNumber = 0;
             for (let i = 1; i < position.lineNumber + 1; i++) {
@@ -679,7 +679,7 @@ require(['vs/editor/editor.main'], function () {
             if (isValidCompletion) {
                 markers = [];
             }
-            monaco.editor.setModelMarkers(window.instanceEditor.getModel(), OWNER_EDITOR, markers);
+            monaco.editor.setModelMarkers(window.instanceAssembly.getModel(), OWNER_ASM, markers);
 
             return { suggestions: suggestions };
         }
@@ -742,7 +742,7 @@ require(['vs/editor/editor.main'], function () {
     // operation for this to work (either a single call to `setValue()`
     // or `executeEdits()`).
     var isModelBytesSync = false;
-    var isModelEditorSync = false;
+    var isModelAssemblySync = false;
 
     // Used for persisting previous assembled byte data on unmodified instructions during syncs.
     var currentSyncBytesLineNumber = INVALID_LINE;
@@ -756,9 +756,9 @@ require(['vs/editor/editor.main'], function () {
     var knownLabels = new Set();
 
     // Globally visible for tests
-    window.instanceEditor = monaco.editor.create(
-        document.getElementById('editor'), {
-            language: LANGUAGE_EDITOR,
+    window.instanceAssembly = monaco.editor.create(
+        document.getElementById('assembly'), {
+            language: LANGUAGE_ASM,
             minimap: {
                 enabled: false,
             },
@@ -779,19 +779,19 @@ require(['vs/editor/editor.main'], function () {
     // Handlers
     //
 
-    window.instanceEditor.onDidChangeModelContent((context) => {
-        const modelEditor = window.instanceEditor.getModel();
+    window.instanceAssembly.onDidChangeModelContent((context) => {
+        const modelAssembly = window.instanceAssembly.getModel();
         const previousMarkers = monaco.editor.getModelMarkers();
         if (previousMarkers.length > 0
-            && previousMarkers[0].owner === OWNER_EDITOR
-            && window.instanceEditor.getPosition().lineNumber === previousMarkers[0].startLineNumber) {
-            monaco.editor.setModelMarkers(window.instanceEditor.getModel(), OWNER_EDITOR, []);
+            && previousMarkers[0].owner === OWNER_ASM
+            && window.instanceAssembly.getPosition().lineNumber === previousMarkers[0].startLineNumber) {
+            monaco.editor.setModelMarkers(window.instanceAssembly.getModel(), OWNER_ASM, []);
         }
 
-        if (isModelEditorSync) {
-            isModelEditorSync = false;
+        if (isModelAssemblySync) {
+            isModelAssemblySync = false;
         } else {
-            updateCacheOnChanges(context, modelEditor, KEY_ASM);
+            updateCacheOnChanges(context, modelAssembly, KEY_ASM);
             syncBytes();
 
             storeAssembly();
@@ -827,7 +827,7 @@ require(['vs/editor/editor.main'], function () {
                 isEditorInitialized = true;
             }
         });
-    })).observe(document.querySelector('#editor'), { childList: true });
+    })).observe(document.querySelector('#assembly'), { childList: true });
 
     document.querySelector('#offset-input').onchange = function() {
         if (isValidHexNumber(document.getElementById('offset-input').value)) {
@@ -858,13 +858,13 @@ require(['vs/editor/editor.main'], function () {
     document.querySelector('#save-patch-button').onclick = function() {
         let data = [];
         const modelBytes = window.instanceBytes.getModel();
-        const modelEditor = window.instanceEditor.getModel();
+        const modelAssembly = window.instanceAssembly.getModel();
         for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
             const line = modelBytes.getLineContent(i);
             if (line == UNKNOWN_BYTES) {
                 continue;
             }
-            const disassembledLine = modelEditor.getLineContent(i).trim();
+            const disassembledLine = modelAssembly.getLineContent(i).trim();
             if (!disassembledLine) {
                 continue;
             } else if (isDirective(disassembledLine)) {

@@ -1,12 +1,12 @@
 # Ghembler
 
-Assembler and Disassembler for Ghidra processor modules featuring auto-completion. Besides the intended pun in the name, it also suggests taking the risk of finding bugs. 🙂
+Interactive assembler for Ghidra processor modules featuring auto-completion. Besides the intended pun in the name, it also suggests taking the risk of finding bugs. 🙂
 
 Example using [Toshiba TLCS-900/H](https://github.com/nevesnunes/ghidra-tlcs900h):
 
 ![](./img/1.png)
 
-Example using x86-64 (jump to absolute address `0x5` vs relative address `0x2005`):
+Example using x86-64 (jump to absolute address `0x5` vs relative address `0x2005` with label `foo`):
 
 ![](./img/2.png)
 

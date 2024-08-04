@@ -20,7 +20,7 @@ body {
     height: 25rem;
     flex: 1 0;
 }
-.editor {
+.assembly {
     border: 1px solid lightgrey;
     height: 25rem;
     flex: 2 0;
