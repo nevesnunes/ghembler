@@ -23,6 +23,11 @@ require(['vs/editor/editor.main'], function () {
     // Helper methods
     //
 
+    const trace = (text) => {
+        // Uncomment for trace logging.
+        // console.log(text);
+    }
+
     const loadAssembly = () => {
         let storedAssembly = localStorage.getItem(KEY_ASM);
         if (storedAssembly) {
@@ -385,10 +390,10 @@ require(['vs/editor/editor.main'], function () {
             bytesIdx--;
         }
 
-        //console.log("i startIdx key asmIdx bytesIdx:", i, startIdx, key, asmIdx, bytesIdx);
-        //console.log("newCache:", newCache);
-        //console.log("inRangeNewCache:", inRangeNewCache);
-        //console.log("endNewCache:", endNewCache);
+        trace("i startIdx key asmIdx bytesIdx:", i, startIdx, key, asmIdx, bytesIdx);
+        trace("newCache:", newCache);
+        trace("inRangeNewCache:", inRangeNewCache);
+        trace("endNewCache:", endNewCache);
         cache = newCache.concat(inRangeNewCache.concat(endNewCache));
 
         for (let i = 0; i < cache.length; i++) {
@@ -739,12 +744,13 @@ require(['vs/editor/editor.main'], function () {
     var isModelBytesSync = false;
     var isModelEditorSync = false;
 
+    // Used for persisting previous assembled byte data on unmodified instructions during syncs.
     var currentSyncBytesLineNumber = INVALID_LINE;
     var currentSyncBytesLineLength = 0;
     var currentSyncBytesLineData = '';
 
+    // Previous instructions metadata for tracking unmodified instructions on editor changes.
     var cache = [];
-
     var cacheOffset = 0;
     var cacheOffsetLine = MAX;
     var knownLabels = new Set();

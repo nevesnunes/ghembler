@@ -90,6 +90,11 @@ public class AsmServer extends GhidraScript {
 	private record AssemblyLine(Address address, String type, String data, long previousLength, String previousData) {
 	}
 
+	private void trace(final String text) {
+		// Uncomment for trace logging.
+		// println(text);
+	}
+
 	@Override
 	protected void run() throws Exception {
 		setupProgram();
@@ -179,7 +184,6 @@ public class AsmServer extends GhidraScript {
 			he.getRequestHeaders();
 			InputStream is = he.getRequestBody();
 			byte[] data = is.readAllBytes();
-			// println(new String(data));
 
 			List<AssemblyLine> lines = parseAssemblyLines(data);
 			boolean isBatch = lines.size() > 1;
@@ -219,7 +223,7 @@ public class AsmServer extends GhidraScript {
 
 			while (jsonReader.hasNext()) {
 				AssemblyLine line = parseAssemblyLine(jsonReader);
-				println(String.format("Got '%s' @ 0x%08x => '%s'",
+				trace(String.format("Got '%s' @ 0x%08x => '%s'",
 						line.type(),
 						line.address().getUnsignedOffset(),
 						line.data()));
@@ -235,7 +239,7 @@ public class AsmServer extends GhidraScript {
 	}
 
 	private void putSymbol(Address address, String name) throws InvalidInputException {
-		println(String.format("putSymbol '%s' @ 0x%08x", name, address.getUnsignedOffset()));
+		trace(String.format("putSymbol '%s' @ 0x%08x", name, address.getUnsignedOffset()));
 		currentProgram.getSymbolTable().getSymbols(name).forEach(Symbol::delete);
 		currentProgram.getSymbolTable()
 				.createLabel(address, name, currentProgram.getGlobalNamespace(), SourceType.USER_DEFINED);
@@ -264,7 +268,7 @@ public class AsmServer extends GhidraScript {
 						// we need to compute the next instruction's address, picking one of the
 						// possible encodings (which might not match what the user previously picked).
 						long candidateDiff = Math.abs(co.getDisplay().length() - line.previousLength);
-						println(String.format("%s: %s-%s=%s last=%s\n",
+						trace(String.format("%s: %s-%s=%s last=%s\n",
 								co.getDisplay().replaceAll("\\s+", ""),
 								co.getDisplay().length(),
 								line.previousLength,
@@ -275,7 +279,7 @@ public class AsmServer extends GhidraScript {
 							candidateInstruction = (AssemblyInstruction) co;
 						}
 					} else if (co instanceof AssemblySuggestion) {
-						// println("Skipping AssemblySuggestion in batch mode");
+						trace("Skipping AssemblySuggestion in batch mode");
 					} else if (co instanceof AssemblyError) {
 						JsonObject json = new JsonObject();
 						json.addProperty(ASSEMBLER_COMPLETION_TYPE, "assembly_error");
@@ -450,7 +454,6 @@ public class AsmServer extends GhidraScript {
 			he.getRequestHeaders();
 			InputStream is = he.getRequestBody();
 			byte[] data = is.readAllBytes();
-			// println(new String(data));
 
 			List<AssemblyLine> lines = parseAssemblyLines(data);
 			boolean isBatch = lines.size() > 1;
@@ -539,8 +542,13 @@ public class AsmServer extends GhidraScript {
 					continue;
 				}
 
-				disassembler.disassemble(nextAddress, new AddressSet(nextAddress), false);
-				final Instruction ins = currentProgram.getListing().getInstructionAt(nextAddress);
+				Instruction ins = null;
+				if (nextAddress == null) {
+					printerr(String.format("Got null nextAddress."));
+				} else {
+					disassembler.disassemble(nextAddress, new AddressSet(nextAddress), false);
+					ins = currentProgram.getListing().getInstructionAt(nextAddress);
+				}
 				if (ins == null) {
 					printerr(String.format("Null instruction @ 0x%08x", nextAddress.getUnsignedOffset()));
 
@@ -614,7 +622,7 @@ public class AsmServer extends GhidraScript {
 		if (hexBytes.isBlank()) {
 			throw new RuntimeException(String.format("Null bytes to put @ 0x%08x", address.getUnsignedOffset()));
 		}
-		println(String.format("Put @ 0x%08x = '%s'", address.getUnsignedOffset(), hexBytes));
+		trace(String.format("Put @ 0x%08x = '%s'", address.getUnsignedOffset(), hexBytes));
 
 		byte[] memBytes = HexFormat.of().parseHex(hexBytes.replaceAll("\\s+", ""));
 		putAt(address, memBytes);
