@@ -1,6 +1,6 @@
-# SLEIGHed
+# Ghembler
 
-Assembler and Disassembler for Ghidra processor modules featuring auto-completion. (WIP)
+Assembler and Disassembler for Ghidra processor modules featuring auto-completion. Besides the intended pun in the name, it also suggests taking the risk of finding bugs. 🙂
 
 Example using [Toshiba TLCS-900/H](https://github.com/nevesnunes/ghidra-tlcs900h):
 
