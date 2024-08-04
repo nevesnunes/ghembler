@@ -305,7 +305,8 @@ require(['vs/editor/editor.main'], function () {
         const modelEditor = window.instanceEditor.getModel();
         const lineCountBytes = modelBytes.getLineCount();
         const lineCountEditor = modelEditor.getLineCount();
-        const lineCount = Math.max(lineCountBytes, lineCountEditor);
+        const lineCountMax = Math.max(lineCountBytes, lineCountEditor);
+        const lineCount = key == KEY_ASM ? lineCountEditor : lineCountBytes;
 
         // FIXME: How to handle more than one change?
         const change = context.changes[0];
@@ -318,7 +319,7 @@ require(['vs/editor/editor.main'], function () {
         // in-range modifications that resulted in previously present lines.
         let newCache = [];
         let startIdx = 1;
-        for (let i = 1; i < lineCountEditor + 1; i++) {
+        for (let i = 1; i < lineCount + 1; i++) {
             if (cache[i - 1]?.[key] != model.getLineContent(i)) {
                 break;
             }
@@ -348,7 +349,7 @@ require(['vs/editor/editor.main'], function () {
         // Match all identical lines from the end.
         // We should have both lines after change range, and the last
         // in-range modifications that resulted in previously present lines.
-        let i = lineCount;
+        let i = lineCountMax;
         let asmIdx = lineCountEditor;
         let bytesIdx = lineCountBytes;
         let endNewCache = [];
