@@ -110,5 +110,6 @@ npx playwright test --debug --ui --project=chromium
 ## Related work
 
 - [GitHub \- ret2jazzy/disasm\.pro: A realtime assembler/disassembler \(formerly known as disasm\.ninja\)](https://github.com/ret2jazzy/disasm.pro)
+- [GitHub \- CzBiX/disasm\-web: Online Assembler and Disassembler, support offline usage\.](https://github.com/CzBiX/disasm-web)
 - [GitHub \- emproof\-com/nyxstone: Nyxstone: assembly / disassembly library based on LLVM, implemented in C\+\+ with Rust and Python bindings, maintained by emproof\.com](https://github.com/emproof-com/nyxstone)
 - [GitHub \- gaasedelen/patching: An Interactive Binary Patching Plugin for IDA Pro](https://github.com/gaasedelen/patching)
