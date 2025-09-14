@@ -111,5 +111,9 @@ npx playwright test --debug --ui --project=chromium
 
 - [GitHub \- ret2jazzy/disasm\.pro: A realtime assembler/disassembler \(formerly known as disasm\.ninja\)](https://github.com/ret2jazzy/disasm.pro)
 - [GitHub \- CzBiX/disasm\-web: Online Assembler and Disassembler, support offline usage\.](https://github.com/CzBiX/disasm-web)
+- [GitHub \- robalb/x86\-64\-playground: An online assembly editor and debugger for the x86\-64 architecture](https://github.com/robalb/x86-64-playground)
+- [GitHub \- hugsy/cemu: Cheap EMUlator: lightweight multi\-architecture assembly playground](https://github.com/hugsy/cemu)
 - [GitHub \- emproof\-com/nyxstone: Nyxstone: assembly / disassembly library based on LLVM, implemented in C\+\+ with Rust and Python bindings, maintained by emproof\.com](https://github.com/emproof-com/nyxstone)
+- [r2wasm](https://radareorg.github.io/r2wasm/index.html)
 - [GitHub \- gaasedelen/patching: An Interactive Binary Patching Plugin for IDA Pro](https://github.com/gaasedelen/patching)
+- [GitHub \- anthonyshibitov/netdis: Web based binary analysis](https://github.com/anthonyshibitov/netdis)
