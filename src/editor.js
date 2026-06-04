@@ -837,13 +837,34 @@ require(['vs/editor/editor.main'], function () {
 
     document.querySelector('#save-bin-button').onclick = function() {
         let data = [];
+        let parsedLen = 0;
         const modelBytes = window.instanceBytes.getModel();
+        const modelAssembly = window.instanceAssembly.getModel();
         for (let i = 1; i < modelBytes.getLineCount() + 1; i++) {
             const line = modelBytes.getLineContent(i);
-            if (!line || (line == UNKNOWN_BYTES)) {
+            if (line == UNKNOWN_BYTES) {
                 continue;
             }
-            data.push(fromHexStringToU8(line));
+            const disassembledLine = modelAssembly.getLineContent(i).trim();
+            if (!disassembledLine) {
+                continue;
+            } else if (isDirective(disassembledLine)) {
+                let candidateOrigin = parseOriginDirective(disassembledLine);
+                if (candidateOrigin) {
+                    if (parsedLen > candidateOrigin[1]) {
+                        console.error(`Invalid origin='${candidateOrigin[1]}' < parsed data length='${parsedLen}'`);
+                        continue;
+                    }
+                    let parsedBytes = new Uint8Array(candidateOrigin[1] - parsedLen);
+                    parsedLen += parsedBytes.length;
+                    data.push(parsedBytes);
+                }
+                continue;
+            } else if (line) {
+                let parsedBytes = fromHexStringToU8(line);
+                parsedLen += parsedBytes.length;
+                data.push(parsedBytes);
+            }
         }
         if (data.length === 0) {
             alert("No bytes to save.");
