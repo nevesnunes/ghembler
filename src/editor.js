@@ -859,6 +859,11 @@ require(['vs/editor/editor.main'], function () {
                     parsedLen += parsedBytes.length;
                     data.push(parsedBytes);
                 }
+                if (parseByteDirective(disassembledLine) || parseFillDirective(disassembledLine)) {
+                    let parsedBytes = Uint8Array.fromHex(line.replaceAll(/\s+/g, ""));
+                    parsedLen += parsedBytes.length;
+                    data.push(parsedBytes);
+                }
                 continue;
             } else if (line) {
                 let parsedBytes = fromHexStringToU8(line);
@@ -894,6 +899,9 @@ require(['vs/editor/editor.main'], function () {
                     data.push(`\n    f.write(b)\n`);
                     data.push(`\n    f.seek(${candidateOrigin[1]})\n`);
                     data.push(`\n    b = b''\n`);
+                }
+                if (parseByteDirective(disassembledLine) || parseFillDirective(disassembledLine)) {
+                    data.push(`\n    b += b'${fromHexStringToPy(line)}'\n`);
                 }
                 continue;
             } else if (disassembledLine.length > 0) {
